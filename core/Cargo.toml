@@ -1,0 +1,17 @@
+[package]
+name = "alchemists-core"
+description = "Reading and writing Alchemy Factory game files"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+indexmap.workspace = true
+repak.workspace = true
+retoc.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+winreg = "0.56"

@@ -1,0 +1,8 @@
+[package]
+name = "alchemists-gui"
+description = "Desktop interface for the Alchemy Factory tools"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]

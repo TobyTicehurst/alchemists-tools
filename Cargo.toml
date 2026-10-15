@@ -1,0 +1,18 @@
+[workspace]
+resolver = "2"
+members = ["core", "calculator", "cli", "gui"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[workspace.dependencies]
+alchemists-core = { path = "core" }
+anyhow = "1"
+clap = { version = "4.5", features = ["derive"] }
+indexmap = { version = "2", features = ["serde"] }
+repak = { git = "https://github.com/trumank/repak.git", features = ["oodle"] }
+retoc = { git = "https://github.com/trumank/retoc.git" }
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
