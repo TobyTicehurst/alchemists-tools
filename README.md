@@ -93,53 +93,32 @@ alchemists-tools mod list
 alchemists-tools mod scan                              # every mod in the game folder, and its files
 ```
 
-The game reads each table whole from the last container that has it, so installing merges the
-table edits of every installed mod into one container, `zzz_ModTables_P`, in dependency order.
-Dependencies are written as in Factorio's `info.json`: `"VaultCore >= 0.2.0"`, `"? Optional"`,
-`"(?) Hidden"`, `"+ Recommended"`, `"~ NoOrder"`, `"! Incompatible"`.
+- **Several mods together:** the game reads each table whole from the last container that has it, so
+  installing merges the table edits of every installed mod into one container, in dependency order.
+  Dependencies are written as in Factorio's `info.json`: `"VaultCore >= 0.2.0"`, `"? Optional"`,
+  `"(?) Hidden"`, `"+ Recommended"`, `"~ NoOrder"`, `"! Incompatible"`.
+- **Safe installs:** each installed mod has a manifest of its files with their SHA-256 hashes, and no
+  two mods may own a file. A file is only deleted or replaced when it's listed, inside the game folder,
+  and unchanged since it was installed.
 
-**Manifests: what each mod owns.** Each installed mod has a manifest,
-`Paks/~mods/manifests/<name>.json`: its name, version and dependencies, and every file it put in
-the game folder, with its size and SHA-256 hash. `Paks/~mods/installed-mods.json` lists the
-installed mods, the load order, and the hashes of the two files the tool merges for all of them
-(`zzz_ModTables_P` and `zzz_ModSave_P`). No two mods may own the same file, so `install` stops
-when a file it would write:
-- is in another mod's manifest, or is one of the merged files;
-- already exists and isn't this mod's (a mod installed by hand, say), or has changed since this
-  mod installed it.
-
-Nothing is deleted or replaced unless all of this holds:
-1. it's in that mod's manifest (or, for a merged file, recorded as written by the tool);
-2. its path is relative, has no `..`, starts with `AlchemyFactory/`, and resolves inside the game
-   folder, links followed;
-3. its size and hash are still those installed.
-
-A file that has changed is kept, and `uninstall` lists it; `--force` deletes it too. A merged file
-that has changed stops the install or uninstall before anything is touched. Folders are never
-deleted with their contents: only files one by one, then the folders that leaves empty below
-`ue4ss/Mods/`, so your own files in a mod's folder keep it.
-
-`uninstall` also needs `--force`:
-- when an installed mod requires the one being removed;
-- for a mod without a manifest (installed by an older version, or by hand). It lists the files it
-  would delete first; reinstalling the mod with this tool gives it a manifest.
-
-A zip from `mod dist` carries the mod's manifest. So a mod a player extracts by hand is known too:
-`mod scan` adds it to `installed-mods.json`, and `uninstall` removes it.
-
-`mod scan` reports:
-- every mod with a manifest, and whether its files are as installed;
-- mods recorded without a manifest;
-- the merged files;
-- everything in `Paks/~mods` and `ue4ss/Mods` that no mod accounts for, with the game assets each
-  unknown container replaces;
-- assets that more than one container replaces (only one copy takes effect).
+**[docs/MODDING.md](docs/MODDING.md) is the full guide:**
+- edit files;
+- new recipes, research and buildings;
+- `mod.json`;
+- what the build checks;
+- installing and manifests;
+- the template save;
+- Lua mods;
+- cooked content;
+- sharing;
+- game updates.
 
 Other commands:
 
 | Command | What |
 |---|---|
 | `build-tables <folder>` | One folder of edit files -> a data container |
+| `stub` | Set up the stub Unreal project for cooked content, from a blank C++ project, and build it |
 | `package-content /Game/Mods/MyMod` | Content cooked in a stub Unreal project -> a content container |
 | `probe <Name> <Class>:<Function>...` | A UE4SS mod that logs calls to game functions |
 | `update` | After a game update: check the dumps, re-extract, rebuild the stub project, rebuild the mods |

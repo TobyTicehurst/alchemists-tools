@@ -16,25 +16,12 @@
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 
-use anyhow::{bail, Context, Result};
+use anyhow::{bail, Result};
 use regex::Regex;
 use serde_json::{json, Value};
 
-use crate::game::{display_path, join, Game};
+use crate::game::{join, Game};
 use crate::mods::{game_build, Workspace};
-
-/// `Build.cs` fixes the dumped module needs (UE 5.6 renamed the setting; the session-search code
-/// links against OnlineSubsystem).
-const BUILD_CS_FIXES: &[(&str, &str)] = &[
-    (
-        "        ShadowVariableWarningLevel = ",
-        "        CppCompileWarningSettings.ShadowVariableWarningLevel = ",
-    ),
-    (
-        "            \"OnlineSubsystemUtils\",",
-        "            \"OnlineSubsystem\",\n            \"OnlineSubsystemUtils\",",
-    ),
-];
 
 /// CoreUObject's script structs (FVector, FColor, ...) are declared for UHT only in
 /// NoExportTypes.h, which mustn't be included; their real declarations come with CoreMinimal.h.
@@ -185,7 +172,7 @@ fn same_tree(a: &Path, b: &Path) -> bool {
             .all(|name| std::fs::read(a.join(name)).ok() == std::fs::read(b.join(name)).ok())
 }
 
-fn copy_folder(from: &Path, to: &Path) -> Result<()> {
+pub(crate) fn copy_folder(from: &Path, to: &Path) -> Result<()> {
     for file in files_below(from, None) {
         let target = to.join(file.strip_prefix(from)?);
         std::fs::create_dir_all(target.parent().unwrap())?;
@@ -340,52 +327,8 @@ pub fn fix_includes(source: &Path, engine: &Path) -> Result<usize> {
 }
 
 fn rebuild_stub(game: &Game, project: &Path, engine: &Path, state: &Path) -> Result<()> {
-    let dump = join(&ue4ss(game), &["UHTHeaderDump", "BeltTD"]);
-    let source = join(
-        project.parent().unwrap_or(Path::new(".")),
-        &["Source", "BeltTD"],
-    );
-    let backup = state.join("BeltTD-before-update");
-    let _ = std::fs::remove_dir_all(&backup);
-    copy_folder(&source, &backup)?;
-    println!("   backed up the module to {}", display_path(&backup));
-    std::fs::remove_dir_all(&source)?;
-    copy_folder(&dump, &source)?;
-    println!(
-        "   fixed the includes of {} file(s)",
-        fix_includes(&source, &engine.join("Engine"))?
-    );
-    let build_cs = source.join("BeltTD.Build.cs");
-    let mut text = std::fs::read_to_string(&build_cs)?;
-    for (old, new) in BUILD_CS_FIXES {
-        if text.contains(new) {
-            continue;
-        }
-        if !text.contains(old) {
-            bail!(
-                "{}: can't apply the fix {:?}; the dumped file has changed, so edit it by hand and \
-                build",
-                display_path(&build_cs),
-                new.trim()
-            );
-        }
-        text = text.replacen(old, new, 1);
-    }
-    std::fs::write(&build_cs, text)?;
-    println!("   applied the Build.cs fixes");
-    let build = join(engine, &["Engine", "Build", "BatchFiles", "Build.bat"]);
-    let status = std::process::Command::new("cmd")
-        .args(["/c"])
-        .arg(&build)
-        .args(["AlchemyFactoryEditor", "Win64", "Development"])
-        .arg(format!("-Project={}", project.display()))
-        .args(["-WaitMutex", "-NoHotReloadFromIDE", "-MaxParallelActions=4"])
-        .status()
-        .context("running Build.bat")?;
-    if !status.success() {
-        bail!("building the stub project failed");
-    }
-    Ok(())
+    crate::stub::install_module(game, project, engine, &state.join("BeltTD-before-update"))?;
+    crate::stub::build_project(project, engine)
 }
 
 /// The game Blueprints that mods copy: the ScriptClass of each building a mod's DT_Buildings edit

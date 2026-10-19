@@ -1,0 +1,11 @@
+{
+  "name": "MyMachine",
+  "title": "My Machine",
+  "version": "0.1.0",
+  "description": "A second Assembler, built from the editor-made Blueprint BP_MyMachine (the Processor's model). The worked example in docs/examples/blueprints.md: build BP_MyMachine in the stub project first.",
+  "author": "",
+  "content": [
+    "/Game/Mods/MyMachine"
+  ],
+  "craft-types": {}
+}

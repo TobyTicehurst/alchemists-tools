@@ -1,0 +1,7 @@
+{
+  "name": "ExampleRecipes",
+  "title": "Example: Recipes",
+  "version": "0.1.0",
+  "description": "The worked example in docs/examples/recipes.md: changes to four recipes, and a new Processor recipe (2 Planks -> 1 Large Wooden Gear) with the research that unlocks it.",
+  "author": ""
+}

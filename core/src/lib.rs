@@ -15,6 +15,7 @@ pub mod probe;
 pub mod reader;
 pub mod save;
 pub mod schema;
+pub mod stub;
 pub mod text;
 pub mod unpack;
 pub mod update;

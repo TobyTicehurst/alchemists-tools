@@ -1,0 +1,25 @@
+{
+  "_comment": "Research (DT_SkillPoints), the upgrade tree (DT_UpgradePoints), and what upgrades do (DT_Improvements)",
+  "DT_SkillPoints": {
+    "HealingPotion": {
+      "_comment": "The Healing Potion research: 300 copper (was 570), 45 s at 100 % Research Speed (was 90 s). UnlockCost is gold/silver/copper as X/Y/Z; only Z is given, so X and Y stay 0.",
+      "UnlockCost": {"Z": 300},
+      "UnlockResearchPoints": 45.0
+    }
+  },
+  "DT_UpgradePoints": {
+    "FactorySpeed1": {
+      "_comment": "Factory Efficiency 1 costs 30 upgrade points (was 60). In this table UnlockResearchPoints is the cost in upgrade points.",
+      "UnlockResearchPoints": 30.0
+    }
+  },
+  "DT_Improvements": {
+    "FactorySpeed1": {
+      "_comment": "What Factory Efficiency 1 does: +50 % production speed (was +25 %), with the heat use still +25 %. Effects is a list, so both entries are given.",
+      "Effects": [
+        {"AttributeName": "FactorySpeed", "ModificationType": "Increase", "ModValue": 50.0},
+        {"AttributeName": "FactoryConsumeSpeed", "ModificationType": "Increase", "ModValue": 25.0}
+      ]
+    }
+  }
+}

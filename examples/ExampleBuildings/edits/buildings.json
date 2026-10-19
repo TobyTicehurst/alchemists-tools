@@ -1,0 +1,34 @@
+{
+  "_comment": "Buildings (DT_Buildings). A new building row keeps the copied building's model and behaviour (its Blueprint, ScriptClass); a model or recipe list of its own needs a Blueprint (docs/examples/blueprints.md).",
+  "DT_Buildings": {
+    "Kiln": {
+      "_comment": "Costs 10 Stone + 5 Clay (was 20 + 10), and uses 10 heat per second (was 15)",
+      "CostList": [
+        {"IngredientName": "Stone", "Count": 10},
+        {"IngredientName": "Clay", "Count": 5}
+      ],
+      "HeatCost": 10.0
+    },
+    "StoneProcessor": {
+      "_comment": "A copy of the Processor: the same model, size, belt ports and recipes, with its own cost, name and description. ID 221 is in the 2xx group (active crafting machines); MyMachine uses 220.",
+      "_copy": "Processor",
+      "ID": 221,
+      "AlterBuildOption": "None",
+      "CostList": [
+        {"IngredientName": "Stone", "Count": 20},
+        {"IngredientName": "LargeWoodGear", "Count": 3}
+      ],
+      "DisplayName": "Stone Processor",
+      "DisplayDesc": "A Processor built from Stone instead of Planks. Processes materials into components."
+    }
+  },
+  "DT_SkillPoints": {
+    "StoneProcessor": {
+      "_comment": "Unlocks the Stone Processor: a copy of the Processor's research, one row lower and two columns left",
+      "_copy": "Processor",
+      "SlotPosition": {"X": -2, "Y": 6},
+      "Predecessors": ["Processor"],
+      "UnlockItem": {"ConfigName": "StoneProcessor", "ConfigType": "ConstructOptions"}
+    }
+  }
+}

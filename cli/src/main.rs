@@ -102,6 +102,21 @@ enum Command {
         #[arg(long)]
         allow_old_dumps: bool,
     },
+    /// Set up the stub Unreal project, for cooked content: add the game's C++ module from the
+    /// UE4SS header dump, its collision settings and the mod folders to cook, then build it.
+    /// Start from a blank C++ project named AlchemyFactory, made in the Epic Games Launcher
+    Stub {
+        /// The stub project's .uproject
+        /// [default: Documents/Unreal Projects/AlchemyFactory/AlchemyFactory.uproject]
+        #[arg(long)]
+        project: Option<PathBuf>,
+        /// The Unreal Engine install
+        #[arg(long, default_value = "C:/Program Files/Epic Games/UE_5.7")]
+        engine: PathBuf,
+        /// Set it up but don't build it
+        #[arg(long)]
+        no_build: bool,
+    },
     /// Write a UE4SS probe mod: logging hooks for game functions, e.g.
     /// probe VaultProbe "BeltTDInventoryComponent:Server_*"
     Probe {
@@ -279,6 +294,16 @@ fn main() -> Result<()> {
             };
             alchemists_core::update::update(&workspace, &options)
         }
+        Command::Stub {
+            project,
+            engine,
+            no_build,
+        } => alchemists_core::stub::setup(
+            &game,
+            &project.unwrap_or_else(default_project),
+            &engine,
+            !no_build,
+        ),
         Command::Probe {
             name,
             functions,

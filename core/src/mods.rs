@@ -14,7 +14,7 @@
 //! are merged: every install and uninstall rebuilds one data container, `zzz_ModTables_P`, from the
 //! edits of every installed mod in dependency order (and `zzz_ModSave_P` from their template-save
 //! edits). The installed mods are recorded in `Paks/~mods/installed-mods.json`, in the same form as
-//! the Python `mods.py` of the mod project writes it, so either tool sees the other's installs.
+//! records written by the mod project's retired Python `mods.py` are still read.
 //!
 //! `build/<name>/` mirrors the game folder. Its own data container (`zzz_<name>_P`: the mod and the
 //! mods it requires) and template save are for the zip, for players without this tool.
@@ -47,7 +47,7 @@ const RECORD: &str = "installed-mods.json";
 const EXAMPLE_EDITS: &str = include_str!("../../templates/example-edits.json");
 /// The merged data container: `zzz_ModTables_P`.
 const MERGED: &str = "ModTables";
-/// The merged template save: `zzz_ModSave_P` (see [`save_pak`]).
+/// The merged template save: `zzz_ModSave_P` (see [`save_container`]).
 const MERGED_SAVE: &str = "Mod";
 const FIRST_CRAFT_TYPE: u8 = 26; // the game's craft types end at Max (25)
 const MOD_FIELDS: &[&str] = &[
@@ -76,7 +76,7 @@ pub fn parse_version(text: &str, at: &str) -> Result<Version> {
         Some(&[a, b, c])
             if parts
                 .iter()
-                .all(|part| part.bytes().all(|b| b.is_ascii_digit())) =>
+                .all(|part| part.bytes().all(|byte| byte.is_ascii_digit())) =>
         {
             Ok((a, b, c))
         }
@@ -84,7 +84,7 @@ pub fn parse_version(text: &str, at: &str) -> Result<Version> {
     }
 }
 
-fn show_version(version: Version) -> String {
+fn version_text(version: Version) -> String {
     format!("{}.{}.{}", version.0, version.1, version.2)
 }
 
@@ -106,10 +106,10 @@ pub enum Kind {
 }
 
 impl Kind {
-    fn needed(self) -> bool {
+    fn is_required(self) -> bool {
         matches!(self, Kind::Required | Kind::Unordered)
     }
-    fn ordering(self) -> bool {
+    fn affects_load_order(self) -> bool {
         matches!(self, Kind::Required | Kind::Optional | Kind::HiddenOptional)
     }
 }
@@ -123,8 +123,12 @@ pub struct Dependency {
 }
 
 fn is_name(text: &str) -> bool {
-    text.chars().next().is_some_and(|c| c.is_ascii_alphabetic())
-        && text.chars().all(|c| c.is_ascii_alphanumeric())
+    text.chars()
+        .next()
+        .is_some_and(|character| character.is_ascii_alphabetic())
+        && text
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric())
 }
 
 /// `"[prefix] Name [operator version]"`, e.g. `"VaultCore >= 0.2.0"` or `"? BiggerChests"`.
@@ -165,7 +169,7 @@ pub fn parse_dependency(text: &str, at: &str) -> Result<Dependency> {
     } else {
         let operator = ["<=", ">=", "<", ">", "="]
             .into_iter()
-            .find(|op| rest.starts_with(op))
+            .find(|candidate| rest.starts_with(candidate))
             .ok_or_else(invalid)?;
         let version = rest[operator.len()..].trim();
         (
@@ -193,10 +197,10 @@ fn satisfies(version: Version, dependency: &Dependency) -> bool {
 }
 
 /// A dependency's version requirement, for messages.
-fn wanted(dependency: &Dependency) -> String {
+fn requirement_text(dependency: &Dependency) -> String {
     match (&dependency.operator, dependency.version) {
         (Some(operator), Some(version)) => {
-            format!("{} {operator} {}", dependency.name, show_version(version))
+            format!("{} {operator} {}", dependency.name, version_text(version))
         }
         _ => dependency.name.clone(),
     }
@@ -306,7 +310,7 @@ fn read_edits(folder: &Path, prefix: &str) -> Result<Vec<(String, Value)>> {
         .collect()
 }
 
-fn strings(value: Option<&Value>, at: &str, field: &str) -> Result<Vec<String>> {
+fn string_list(value: Option<&Value>, at: &str, field: &str) -> Result<Vec<String>> {
     match value {
         None => Ok(vec![]),
         Some(Value::Array(items)) => items
@@ -360,7 +364,7 @@ impl Mod {
         }
         let version = text("version", "0.1.0");
         parse_version(&version, &at)?;
-        let content = strings(fields.get("content"), &at, "content")?;
+        let content = string_list(fields.get("content"), &at, "content")?;
         for path in &content {
             if !path.starts_with(&format!("/Game/Mods/{name}")) {
                 bail!(
@@ -369,19 +373,22 @@ impl Mod {
                 );
             }
         }
-        let new_craft_types = strings(fields.get("new-craft-types"), &at, "new-craft-types")?;
+        let new_craft_types = string_list(fields.get("new-craft-types"), &at, "new-craft-types")?;
         if let Some(bad) = new_craft_types
             .iter()
             .find(|craft_type| !is_name(craft_type))
         {
             bail!("{at}: new craft type {bad:?} must be letters and digits");
         }
-        let dependencies = strings(fields.get("dependencies"), &at, "dependencies")?;
+        let dependencies = string_list(fields.get("dependencies"), &at, "dependencies")?;
         let requires: Vec<Dependency> = dependencies
             .iter()
             .map(|text| parse_dependency(text, &at))
             .collect::<Result<_>>()?;
-        let names: Vec<&str> = requires.iter().map(|d| d.name.as_str()).collect();
+        let names: Vec<&str> = requires
+            .iter()
+            .map(|dependency| dependency.name.as_str())
+            .collect();
         if names.contains(&name.as_str())
             || names.iter().collect::<HashSet<_>>().len() != names.len()
         {
@@ -390,7 +397,12 @@ impl Mod {
         let craft_types = fields
             .get("craft-types")
             .and_then(Value::as_object)
-            .map(|object| object.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
+            .map(|object| {
+                object
+                    .iter()
+                    .map(|(key, value)| (key.clone(), value.clone()))
+                    .collect()
+            })
             .unwrap_or_default();
 
         let edits_folder = folder.join("edits");
@@ -405,14 +417,16 @@ impl Mod {
                 path.is_dir()
                     && path
                         .file_name()
-                        .is_some_and(|f| f.to_string_lossy().starts_with("if-"))
+                        .is_some_and(|file_name| file_name.to_string_lossy().starts_with("if-"))
             })
             .collect();
         subfolders.sort();
         for sub in subfolders {
             let other = sub.file_name().unwrap().to_string_lossy()["if-".len()..].to_string();
-            let dependency = requires.iter().find(|d| d.name == other);
-            if dependency.is_none_or(|d| d.kind.needed() || d.kind == Kind::Incompatible) {
+            let dependency = requires.iter().find(|dependency| dependency.name == other);
+            if dependency.is_none_or(|dependency| {
+                dependency.kind.is_required() || dependency.kind == Kind::Incompatible
+            }) {
                 bail!(
                     "{}: edits for when {other} is installed need {other} as an optional \
                     dependency \
@@ -464,7 +478,7 @@ impl Mod {
                 let cleaned: serde_json::Map<String, Value> = object
                     .iter()
                     .filter(|(key, _)| !key.starts_with('_'))
-                    .map(|(k, v)| (k.clone(), v.clone()))
+                    .map(|(key, value)| (key.clone(), value.clone()))
                     .collect();
                 save_edits.push(serde_json::from_value(Value::Object(cleaned))?);
             }
@@ -498,7 +512,7 @@ fn content_container(name: &str) -> String {
     format!("zzz_{name}Content_P")
 }
 
-fn save_pak(name: &str) -> String {
+fn save_container(name: &str) -> String {
     format!("zzz_{name}Save_P")
 }
 
@@ -563,7 +577,7 @@ impl Workspace {
         Ok(self.assets.get().unwrap())
     }
 
-    fn edit_game(&self) -> Result<edits::Game<'_>> {
+    fn game_for_edits(&self) -> Result<edits::Game<'_>> {
         let assets = self.assets()?;
         if self.localizer.get().is_none() {
             let _ = self
@@ -603,12 +617,12 @@ impl Workspace {
         Mod::load(&folder)
     }
 
-    fn paks(&self) -> PathBuf {
+    fn mods_paks_folder(&self) -> PathBuf {
         join(&self.game.root, PAK_FOLDER)
     }
 
     fn record_path(&self) -> PathBuf {
-        self.paks().join(RECORD)
+        self.mods_paks_folder().join(RECORD)
     }
 
     pub fn record(&self) -> Result<Record> {
@@ -625,12 +639,12 @@ impl Workspace {
 
     // --- craft types ---
 
-    fn registry_path(&self) -> PathBuf {
+    fn allocations_path(&self) -> PathBuf {
         self.mods.join("allocations.json")
     }
 
-    fn registry(&self) -> Result<IndexMap<String, u8>> {
-        let path = self.registry_path();
+    fn allocations(&self) -> Result<IndexMap<String, u8>> {
+        let path = self.allocations_path();
         if !path.exists() {
             return Ok(IndexMap::new());
         }
@@ -647,14 +661,14 @@ impl Workspace {
         name: &str,
         new_craft_types: &[String],
     ) -> Result<IndexMap<String, u8>> {
-        let mut numbers = self.registry()?;
+        let mut numbers = self.allocations()?;
         let mut changed = false;
         for craft_type in new_craft_types {
             let key = format!("{name}:{craft_type}");
             if !numbers.contains_key(&key) {
                 let used: HashSet<u8> = numbers.values().copied().collect();
                 let free = (FIRST_CRAFT_TYPE..=255)
-                    .find(|n| !used.contains(n))
+                    .find(|number| !used.contains(number))
                     .context("no craft type numbers left (26-255)")?;
                 numbers.insert(key.clone(), free);
                 changed = true;
@@ -662,17 +676,17 @@ impl Workspace {
             }
         }
         if changed {
-            write_json(&self.registry_path(), &json!({"craft-types": numbers}))?;
+            write_json(&self.allocations_path(), &json!({"craft-types": numbers}))?;
         }
         Ok(new_craft_types
             .iter()
-            .map(|c| format!("{name}:{c}"))
+            .map(|craft_type| format!("{name}:{craft_type}"))
             .map(|key| (key.clone(), numbers[&key]))
             .collect())
     }
 
     fn known_craft_types(&self) -> Result<IndexMap<String, u8>> {
-        let mut known = self.registry()?;
+        let mut known = self.allocations()?;
         for entry in self.record()?.mods.values() {
             known.extend(entry.craft_type_numbers.clone());
         }
@@ -683,11 +697,11 @@ impl Workspace {
 
     /// A dependency, from the mods folder (built into an entry) or else from the installed mods,
     /// checked against its version requirement.
-    fn find(&self, dependency: &Dependency, at: &str) -> Result<Entry> {
+    fn find_dependency(&self, dependency: &Dependency, at: &str) -> Result<Entry> {
         let local = self.mods.join(&dependency.name);
-        let found = if local.join("mod.json").exists() {
-            let found = Mod::load(&local)?;
-            let numbers = self.allocate_craft_types(&found.name, &found.new_craft_types)?;
+        let entry = if local.join("mod.json").exists() {
+            let local_mod = Mod::load(&local)?;
+            let numbers = self.allocate_craft_types(&local_mod.name, &local_mod.new_craft_types)?;
             let known = self.known_craft_types()?;
             let resolve = |files: &[(String, Value)]| -> Result<Vec<(String, Value)>> {
                 files
@@ -695,13 +709,13 @@ impl Workspace {
                     .map(|(label, data)| {
                         Ok((
                             label.clone(),
-                            resolve_craft_types(data, &found, &known, label)?,
+                            resolve_craft_types(data, &local_mod, &known, label)?,
                         ))
                     })
                     .collect()
             };
             // a dependency's assets, if it has been built
-            let built = self.build.join(&found.name).join("build.json");
+            let built = self.build.join(&local_mod.name).join("build.json");
             let assets = if built.exists() {
                 serde_json::from_value::<Entry>(read_json(&built)?)
                     .map(|entry| entry.assets)
@@ -710,18 +724,18 @@ impl Workspace {
                 IndexMap::new()
             };
             Entry {
-                name: found.name.clone(),
-                title: found.title.clone(),
-                version: found.version.clone(),
-                dependencies: found.dependencies.clone(),
+                name: local_mod.name.clone(),
+                title: local_mod.title.clone(),
+                version: local_mod.version.clone(),
+                dependencies: local_mod.dependencies.clone(),
                 craft_type_numbers: numbers,
-                edits: resolve(&found.edits)?,
-                optional_edits: found
+                edits: resolve(&local_mod.edits)?,
+                optional_edits: local_mod
                     .optional_edits
                     .iter()
-                    .map(|(k, v)| Ok((k.clone(), resolve(v)?)))
+                    .map(|(key, files)| Ok((key.clone(), resolve(files)?)))
                     .collect::<Result<_>>()?,
-                save_edits: found.save_edits.clone(),
+                save_edits: local_mod.save_edits.clone(),
                 assets,
                 ..Entry::default()
             }
@@ -730,47 +744,51 @@ impl Workspace {
                 Some(entry) => entry.clone(),
                 None => bail!(
                     "{at}: needs {}, which is neither in the mods folder nor installed",
-                    wanted(dependency)
+                    requirement_text(dependency)
                 ),
             }
         };
-        if !satisfies(found.version()?, dependency) {
+        if !satisfies(entry.version()?, dependency) {
             bail!(
                 "{at}: needs {}, but {} is {}",
-                wanted(dependency),
+                requirement_text(dependency),
                 dependency.name,
-                found.version
+                entry.version
             );
         }
-        Ok(found)
+        Ok(entry)
     }
 
     /// The mods a mod needs, directly or not, in load order.
-    fn required(&self, name: &str, requires: &[Dependency]) -> Result<Vec<Entry>> {
-        let mut found: IndexMap<String, Entry> = IndexMap::new();
-        let mut todo: Vec<(String, Vec<Dependency>)> = vec![(name.to_string(), requires.to_vec())];
-        while let Some((current, dependencies)) = todo.pop() {
+    fn required_mods(&self, name: &str, requires: &[Dependency]) -> Result<Vec<Entry>> {
+        let mut required: IndexMap<String, Entry> = IndexMap::new();
+        let mut pending: Vec<(String, Vec<Dependency>)> =
+            vec![(name.to_string(), requires.to_vec())];
+        while let Some((current, dependencies)) = pending.pop() {
             for dependency in dependencies {
-                if dependency.kind.needed() && !found.contains_key(&dependency.name) {
-                    let entry = self.find(&dependency, &current)?;
-                    todo.push((entry.name.clone(), entry.requires()?));
-                    found.insert(dependency.name.clone(), entry);
+                if dependency.kind.is_required() && !required.contains_key(&dependency.name) {
+                    let entry = self.find_dependency(&dependency, &current)?;
+                    pending.push((entry.name.clone(), entry.requires()?));
+                    required.insert(dependency.name.clone(), entry);
                 }
             }
         }
-        if found.contains_key(name) {
-            let names: Vec<&String> = found.keys().collect();
+        if required.contains_key(name) {
+            let names: Vec<&String> = required.keys().collect();
             bail!(
                 "{name} requires itself through {}",
                 names
                     .iter()
-                    .map(|n| n.as_str())
+                    .map(|name| name.as_str())
                     .collect::<Vec<_>>()
                     .join(", ")
             );
         }
-        let order = load_order(&found)?;
-        Ok(order.into_iter().map(|name| found[&name].clone()).collect())
+        let order = load_order(&required)?;
+        Ok(order
+            .into_iter()
+            .map(|name| required[&name].clone())
+            .collect())
     }
 }
 
@@ -783,16 +801,16 @@ fn resolve_craft_types(
 ) -> Result<Value> {
     Ok(match value {
         Value::Object(object) => {
-            let mut out = serde_json::Map::new();
+            let mut resolved_fields = serde_json::Map::new();
             for (key, inner) in object {
                 let resolved = if key == "CraftType" {
                     craft_type_number(inner, mod_, known, &format!("{at}.{key}"))?
                 } else {
                     resolve_craft_types(inner, mod_, known, &format!("{at}.{key}"))?
                 };
-                out.insert(key.clone(), resolved);
+                resolved_fields.insert(key.clone(), resolved);
             }
-            Value::Object(out)
+            Value::Object(resolved_fields)
         }
         Value::Array(items) => Value::Array(
             items
@@ -817,7 +835,7 @@ fn craft_type_number(
     let dependency = mod_
         .requires
         .iter()
-        .any(|d| d.name == owner && d.kind != Kind::Incompatible);
+        .any(|dependency| dependency.name == owner && dependency.kind != Kind::Incompatible);
     if owner != mod_.name && !dependency {
         bail!(
             "{at}: craft type {text} belongs to {owner}, which isn't among {}'s dependencies",
@@ -888,28 +906,31 @@ pub struct Record {
 
 /// Mod names with each mod after the mods it depends on (not `~`); otherwise alphabetical.
 fn load_order(mods: &IndexMap<String, Entry>) -> Result<Vec<String>> {
-    let mut after: HashMap<&String, BTreeSet<String>> = HashMap::new();
+    let mut must_load_after: HashMap<&String, BTreeSet<String>> = HashMap::new();
     for (name, entry) in mods {
         let before = entry
             .requires()?
             .into_iter()
-            .filter(|d| d.kind.ordering() && mods.contains_key(&d.name))
-            .map(|d| d.name)
+            .filter(|dependency| {
+                dependency.kind.affects_load_order() && mods.contains_key(&dependency.name)
+            })
+            .map(|dependency| dependency.name)
             .collect();
-        after.insert(name, before);
+        must_load_after.insert(name, before);
     }
     let mut order: Vec<String> = vec![];
     while order.len() < mods.len() {
-        let done: BTreeSet<String> = order.iter().cloned().collect();
+        let placed: BTreeSet<String> = order.iter().cloned().collect();
         let mut ready: Vec<&String> = mods
             .keys()
-            .filter(|n| !done.contains(*n) && after[n].is_subset(&done))
+            .filter(|name| !placed.contains(*name) && must_load_after[name].is_subset(&placed))
             .collect();
         ready.sort();
         let Some(next) = ready.first() else {
-            let mut stuck: Vec<&String> = mods.keys().filter(|n| !done.contains(*n)).collect();
+            let mut stuck: Vec<&String> =
+                mods.keys().filter(|name| !placed.contains(*name)).collect();
             stuck.sort();
-            let stuck: Vec<&str> = stuck.iter().map(|n| n.as_str()).collect();
+            let stuck: Vec<&str> = stuck.iter().map(|name| name.as_str()).collect();
             bail!(
                 "dependency loop between {}: make one of the dependencies \"~\" (doesn't affect \
                 load order)",
@@ -923,21 +944,24 @@ fn load_order(mods: &IndexMap<String, Entry>) -> Result<Vec<String>> {
 
 /// The installed mods that load before `name` because of its dependencies, directly or not.
 fn ancestors(name: &str, mods: &IndexMap<String, Entry>) -> Result<HashSet<String>> {
-    let mut out = HashSet::new();
-    let mut todo = vec![name.to_string()];
-    while let Some(current) = todo.pop() {
-        for d in mods[&current].requires()? {
-            if d.kind.ordering() && mods.contains_key(&d.name) && out.insert(d.name.clone()) {
-                todo.push(d.name);
+    let mut ancestors = HashSet::new();
+    let mut pending = vec![name.to_string()];
+    while let Some(current) = pending.pop() {
+        for dependency in mods[&current].requires()? {
+            if dependency.kind.affects_load_order()
+                && mods.contains_key(&dependency.name)
+                && ancestors.insert(dependency.name.clone())
+            {
+                pending.push(dependency.name);
             }
         }
     }
-    Ok(out)
+    Ok(ancestors)
 }
 
 /// A mod's edit files, plus those for the optional dependencies that are present.
-fn sources_of(entry: &Entry, present: &HashSet<String>) -> Vec<edits::Source> {
-    let mut out: Vec<edits::Source> = entry
+fn table_edits_of(entry: &Entry, present: &HashSet<String>) -> Vec<edits::Source> {
+    let mut sources: Vec<edits::Source> = entry
         .edits
         .iter()
         .map(|(label, contents)| edits::Source {
@@ -949,31 +973,29 @@ fn sources_of(entry: &Entry, present: &HashSet<String>) -> Vec<edits::Source> {
     others.sort();
     for other in others {
         if present.contains(other) {
-            out.extend(
-                entry.optional_edits[other]
-                    .iter()
-                    .map(|(label, contents)| edits::Source {
-                        label: label.clone(),
-                        contents: contents.clone(),
-                    }),
-            );
+            sources.extend(entry.optional_edits[other].iter().map(|(label, contents)| {
+                edits::Source {
+                    label: label.clone(),
+                    contents: contents.clone(),
+                }
+            }));
         }
     }
-    out
+    sources
 }
 
-fn leaves(value: &Value, path: Vec<String>, out: &mut Vec<(Vec<String>, Value)>) {
+fn leaf_values(value: &Value, path: Vec<String>, collected: &mut Vec<(Vec<String>, Value)>) {
     match value {
         Value::Object(object) => {
             for (key, inner) in object {
                 if !key.starts_with('_') {
                     let mut next = path.clone();
                     next.push(key.clone());
-                    leaves(inner, next, out);
+                    leaf_values(inner, next, collected);
                 }
             }
         }
-        other => out.push((path, other.clone())),
+        other => collected.push((path, other.clone())),
     }
 }
 
@@ -993,36 +1015,40 @@ fn copy_folder(from: &Path, to: &Path) -> Result<()> {
 
 /// Every file below `folder`, as paths relative to it with `/`.
 fn files_below(folder: &Path) -> Vec<String> {
-    let mut out = vec![];
-    let mut todo = vec![folder.to_path_buf()];
-    while let Some(current) = todo.pop() {
+    let mut files = vec![];
+    let mut pending = vec![folder.to_path_buf()];
+    while let Some(current) = pending.pop() {
         for entry in std::fs::read_dir(&current).into_iter().flatten().flatten() {
             let path = entry.path();
             if path.is_dir() {
-                todo.push(path);
+                pending.push(path);
             } else if let Ok(relative) = path.strip_prefix(folder) {
-                out.push(relative.to_string_lossy().replace('\\', "/"));
+                files.push(relative.to_string_lossy().replace('\\', "/"));
             }
         }
     }
-    out.sort();
-    out
+    files.sort();
+    files
 }
 
 /// The modules a Lua script loads with `require("Name")` (or `require "Name"`).
 fn required_modules(script: &str) -> Vec<String> {
-    let mut out = vec![];
-    let mut rest = script;
-    while let Some(at) = rest.find("require") {
-        rest = &rest[at + "require".len()..];
-        let after = rest.trim_start().trim_start_matches('(').trim_start();
-        if let Some(quote) = after.chars().next().filter(|c| *c == '"' || *c == '\'') {
+    let mut modules = vec![];
+    let mut remaining = script;
+    while let Some(at) = remaining.find("require") {
+        remaining = &remaining[at + "require".len()..];
+        let after = remaining.trim_start().trim_start_matches('(').trim_start();
+        if let Some(quote) = after
+            .chars()
+            .next()
+            .filter(|character| *character == '"' || *character == '\'')
+        {
             if let Some(end) = after[1..].find(quote) {
-                out.push(after[1..1 + end].to_string());
+                modules.push(after[1..1 + end].to_string());
             }
         }
     }
-    out
+    modules
 }
 
 impl Workspace {
@@ -1030,11 +1056,12 @@ impl Workspace {
     /// content, its template save, and its UE4SS files; then check them against each other.
     pub fn build_mod(&self, mod_: &Mod) -> Result<(PathBuf, Entry)> {
         let name = &mod_.name;
-        let out = self.build.join(name);
-        let _ = std::fs::remove_dir_all(&out);
-        let paks = join(&out, PAK_FOLDER);
+        let build_folder = self.build.join(name);
+        let _ = std::fs::remove_dir_all(&build_folder);
+        let paks = join(&build_folder, PAK_FOLDER);
         std::fs::create_dir_all(&paks)?;
-        let needed = self.required(name, &mod_.requires)?; // first, so their craft types are known
+        // first, so their craft types are known
+        let needed = self.required_mods(name, &mod_.requires)?;
         let own_numbers = self.allocate_craft_types(name, &mod_.new_craft_types)?;
         let known = self.known_craft_types()?;
         let resolve = |files: &[(String, Value)]| -> Result<Vec<(String, Value)>> {
@@ -1052,7 +1079,7 @@ impl Workspace {
         let optional: IndexMap<String, Vec<(String, Value)>> = mod_
             .optional_edits
             .iter()
-            .map(|(k, v)| Ok((k.clone(), resolve(v)?)))
+            .map(|(key, files)| Ok((key.clone(), resolve(files)?)))
             .collect::<Result<_>>()?;
         let schemas = self.schemas()?;
         let mut machine_types: IndexMap<String, u8> = IndexMap::new();
@@ -1093,13 +1120,13 @@ impl Workspace {
             );
             let mut sources: Vec<edits::Source> = needed
                 .iter()
-                .flat_map(|entry| sources_of(entry, &HashSet::new()))
+                .flat_map(|entry| table_edits_of(entry, &HashSet::new()))
                 .collect();
             sources.extend(own_edits.iter().map(|(label, contents)| edits::Source {
                 label: label.clone(),
                 contents: contents.clone(),
             }));
-            let result = edits::build(&self.edit_game()?, &sources)?;
+            let result = edits::build(&self.game_for_edits()?, &sources)?;
             let utoc = paks.join(format!("{}.utoc", data_container(name)));
             write_container(
                 &utoc,
@@ -1122,7 +1149,7 @@ impl Workspace {
             info.tables = result.changed.keys().cloned().collect();
             info.tables.sort();
             if !optional.is_empty() {
-                let others: Vec<&str> = optional.keys().map(|k| k.as_str()).collect();
+                let others: Vec<&str> = optional.keys().map(|name| name.as_str()).collect();
                 println!(
                     "   edits for when {} are installed are checked when they're merged",
                     others.join(", ")
@@ -1148,13 +1175,13 @@ impl Workspace {
             }
             let mut staged = content::stage(&self.project, &mod_.content)?;
             for (asset, &value) in &machine_types {
-                let found = staged
+                let staged_asset = staged
                     .iter_mut()
                     .find(|staged| staged.path.rsplit('/').next() == Some(asset.as_str()))
                     .with_context(|| {
                         format!("craft type for {asset}: no {asset} among the cooked assets")
                     })?;
-                let old = content::patch_craft_type(found, value)?;
+                let old = content::patch_craft_type(staged_asset, value)?;
                 println!("   craft type {old} -> {value} in {asset}");
             }
             let utoc = paks.join(format!("{}.utoc", content_container(name)));
@@ -1175,7 +1202,7 @@ impl Workspace {
                 .flat_map(|entry| entry.save_edits.clone())
                 .chain(mod_.save_edits.clone())
                 .collect();
-            self.write_save(&edits, &paks, &save_pak(name))?;
+            self.write_save(&edits, &paks, &save_container(name))?;
         }
 
         let scripts = mod_.folder.join("ue4ss");
@@ -1187,7 +1214,7 @@ impl Workspace {
                     display_path(&scripts)
                 );
             }
-            let target = join(&out, UE4SS_FOLDER).join(name);
+            let target = join(&build_folder, UE4SS_FOLDER).join(name);
             copy_folder(&scripts, &target)?;
             std::fs::write(target.join("enabled.txt"), "")?;
             info.needs_ue4ss = true;
@@ -1212,7 +1239,9 @@ impl Workspace {
                 }
                 copy_folder(
                     &entry.path(),
-                    &join(&out, UE4SS_FOLDER).join("shared").join(&module),
+                    &join(&build_folder, UE4SS_FOLDER)
+                        .join("shared")
+                        .join(&module),
                 )?;
             }
             info.needs_ue4ss = true;
@@ -1238,8 +1267,8 @@ impl Workspace {
         let depends: HashSet<&str> = mod_
             .requires
             .iter()
-            .filter(|d| d.kind != Kind::Incompatible)
-            .map(|d| d.name.as_str())
+            .filter(|dependency| dependency.kind != Kind::Incompatible)
+            .map(|dependency| dependency.name.as_str())
             .chain([name.as_str()])
             .collect();
         for folder in [&scripts, &shared] {
@@ -1281,8 +1310,8 @@ impl Workspace {
                         let package = path.split('.').next().unwrap_or(path);
                         let near: Vec<&str> = available
                             .keys()
-                            .filter(|p| p.split('.').next() == Some(package))
-                            .map(|p| p.as_str())
+                            .filter(|asset| asset.split('.').next() == Some(package))
+                            .map(|asset| asset.as_str())
                             .collect();
                         problems.push(format!(
                             "the edits refer to {path}, which neither this mod nor a mod it \
@@ -1307,7 +1336,7 @@ impl Workspace {
         let named: HashSet<u8> = schemas
             .enums
             .get("EBeltTDCraftType")
-            .map(|values| values.keys().filter_map(|k| k.parse().ok()).collect())
+            .map(|values| values.keys().filter_map(|key| key.parse().ok()).collect())
             .unwrap_or_default();
         let mut machines: HashSet<u8> = machine_types.values().copied().collect();
         machines.extend(
@@ -1368,8 +1397,12 @@ impl Workspace {
                         .get(row)
                         .and_then(|row| row.get("DisplayName"))
                         .and_then(Value::as_str);
-                    info.new_buildings
-                        .push(display.filter(|d| !d.is_empty()).unwrap_or(row).to_string());
+                    info.new_buildings.push(
+                        display
+                            .filter(|text| !text.is_empty())
+                            .unwrap_or(row)
+                            .to_string(),
+                    );
                 }
             }
             info.new_rows = new_rows;
@@ -1378,8 +1411,8 @@ impl Workspace {
             bail!("build failed:\n   {}", problems.join("\n   "));
         }
 
-        let found = files_below(&out);
-        if found.is_empty() {
+        let built_files = files_below(&build_folder);
+        if built_files.is_empty() {
             bail!(
                 "{}: nothing to build (no edits/*.json, save/, content in mod.json, ue4ss/ or \
                 ue4ss-shared/)",
@@ -1389,24 +1422,28 @@ impl Workspace {
         // The mod's own data container and template save are for the zip; installing merges them
         let prefix = PAK_FOLDER.join("/");
         let own_data = |file: &String| {
-            [data_container(name), save_pak(name)]
+            [data_container(name), save_container(name)]
                 .iter()
                 .any(|base| file.starts_with(&format!("{prefix}/{base}.")))
         };
-        info.data_files = found.iter().filter(|f| own_data(f)).cloned().collect();
-        info.files = found
+        info.data_files = built_files
             .iter()
-            .filter(|f| !own_data(f) && *f != "build.json")
+            .filter(|file| own_data(file))
             .cloned()
             .collect();
-        write_json(&out.join("build.json"), &info)?;
+        info.files = built_files
+            .iter()
+            .filter(|file| !own_data(file) && *file != "build.json")
+            .cloned()
+            .collect();
+        write_json(&build_folder.join("build.json"), &info)?;
         println!(
             "built {name} {} -> {} ({} file(s))",
             mod_.version,
-            display_path(&out),
-            found.len()
+            display_path(&build_folder),
+            built_files.len()
         );
-        Ok((out, info))
+        Ok((build_folder, info))
     }
 
     /// The game's template save with `edits`, as `<folder>/<base>.pak` with its empty container.
@@ -1445,8 +1482,8 @@ impl Workspace {
             game_rows
                 .entry(table.to_string())
                 .or_insert_with(|| {
-                    let found = assets.find(table);
-                    let rows = found
+                    let matches = assets.find(table);
+                    let rows = matches
                         .first()
                         .and_then(|path| assets.asset(path).ok())
                         .and_then(|asset| read_datatable(asset, schemas, None).ok());
@@ -1462,13 +1499,13 @@ impl Workspace {
         let present: HashSet<String> = order.iter().cloned().collect();
         let related: HashMap<&String, HashSet<String>> = order
             .iter()
-            .map(|n| Ok((n, ancestors(n, mods)?)))
+            .map(|name| Ok((name, ancestors(name, mods)?)))
             .collect::<Result<_>>()?;
         let mut set_by: HashMap<Vec<String>, (String, Value)> = HashMap::new();
         let mut made_by: HashMap<(String, String, String), String> = HashMap::new();
         let mut problems = vec![];
         for name in order {
-            for source in sources_of(&mods[name], &present) {
+            for source in table_edits_of(&mods[name], &present) {
                 for (table, rows) in source.contents.as_object().into_iter().flatten() {
                     if table.starts_with('_') {
                         continue;
@@ -1502,9 +1539,9 @@ impl Workspace {
                                 ));
                             }
                         }
-                        let mut found = vec![];
-                        leaves(fields, vec![table.clone(), row.clone()], &mut found);
-                        for (path, value) in found {
+                        let mut values_set = vec![];
+                        leaf_values(fields, vec![table.clone(), row.clone()], &mut values_set);
+                        for (path, value) in values_set {
                             if let Some((first, old)) = set_by.get(&path) {
                                 if first != name && *old != value && !related[name].contains(first)
                                 {
@@ -1563,8 +1600,8 @@ impl Workspace {
         }
         let with_edits: Vec<&str> = order
             .iter()
-            .filter(|n| !mods[*n].save_edits.is_empty())
-            .map(|n| n.as_str())
+            .filter(|name| !mods[*name].save_edits.is_empty())
+            .map(|name| name.as_str())
             .collect();
         println!(
             "== merging the template-save edits of {}",
@@ -1572,7 +1609,7 @@ impl Workspace {
         );
         let work = self.build.join(".mergesave");
         let _ = std::fs::remove_dir_all(&work);
-        self.write_save(&edits, &work, &save_pak(MERGED_SAVE))?;
+        self.write_save(&edits, &work, &save_container(MERGED_SAVE))?;
         Ok(Some(work))
     }
 
@@ -1626,7 +1663,7 @@ impl Workspace {
             removed = true;
         }
         if let Some(work) = work {
-            std::fs::create_dir_all(self.paks())?;
+            std::fs::create_dir_all(self.mods_paks_folder())?;
             for file in files_below(work) {
                 let relative = format!("{prefix}/{file}");
                 std::fs::copy(work.join(&file), files.resolve(&relative)?)?;
@@ -1645,12 +1682,12 @@ impl Workspace {
         let present: HashSet<String> = order.iter().cloned().collect();
         let sources: Vec<edits::Source> = order
             .iter()
-            .flat_map(|name| sources_of(&record.mods[name], &present))
+            .flat_map(|name| table_edits_of(&record.mods[name], &present))
             .collect();
         record.load_order = order.clone();
         let files = GameFiles::new(&self.game.root)?;
         let base = data_container(MERGED);
-        let save_base = save_pak(MERGED_SAVE);
+        let save_base = save_container(MERGED_SAVE);
         // every merged file is checked before any is touched, and both are built before either
         // is replaced, so a refusal or a failed build leaves the game folder as it was
         self.check_generated(&files, record, &base)?;
@@ -1660,7 +1697,7 @@ impl Workspace {
         if !sources.is_empty() {
             // build first: if it fails, the installed container stays as it was
             println!("== merging the table edits of {}", order.join(", "));
-            let result = edits::build(&self.edit_game()?, &sources)?;
+            let result = edits::build(&self.game_for_edits()?, &sources)?;
             for warning in &result.warnings {
                 println!("   warning: {warning}");
             }
@@ -1716,30 +1753,34 @@ impl Workspace {
 
     fn check_installable(&self, info: &Entry, installed: &IndexMap<String, Entry>) -> Result<()> {
         let mut problems = vec![];
-        let me = info.version()?;
-        for d in info.requires()? {
-            let other = installed.get(&d.name);
-            match (d.kind, other) {
+        let own_version = info.version()?;
+        for dependency in info.requires()? {
+            let other = installed.get(&dependency.name);
+            match (dependency.kind, other) {
                 (Kind::Incompatible, Some(_)) => problems.push(format!(
                     "{} doesn't work with {}, which is installed",
-                    info.name, d.name
+                    info.name, dependency.name
                 )),
                 (Kind::Incompatible, None) => {}
-                (kind, None) if kind.needed() => problems.push(format!(
+                (kind, None) if kind.is_required() => problems.push(format!(
                     "{} needs {}: install it first, or use --with-dependencies",
                     info.name,
-                    wanted(&d)
+                    requirement_text(&dependency)
                 )),
                 (Kind::Recommended, None) => {
-                    println!("note: {} recommends {}", info.name, wanted(&d))
+                    println!(
+                        "note: {} recommends {}",
+                        info.name,
+                        requirement_text(&dependency)
+                    )
                 }
                 (_, None) => {}
                 (_, Some(other)) => {
-                    if !satisfies(other.version()?, &d) {
+                    if !satisfies(other.version()?, &dependency) {
                         problems.push(format!(
                             "{} needs {}, but {} is installed",
                             info.name,
-                            wanted(&d),
+                            requirement_text(&dependency),
                             other.version
                         ));
                     }
@@ -1750,19 +1791,19 @@ impl Workspace {
             if *name == info.name {
                 continue;
             }
-            for d in other.requires()? {
-                if d.name != info.name {
+            for dependency in other.requires()? {
+                if dependency.name != info.name {
                     continue;
                 }
-                if d.kind == Kind::Incompatible {
+                if dependency.kind == Kind::Incompatible {
                     problems.push(format!(
                         "{name} (installed) doesn't work with {}",
                         info.name
                     ));
-                } else if !satisfies(me, &d) {
+                } else if !satisfies(own_version, &dependency) {
                     problems.push(format!(
                         "{name} (installed) needs {}, not {}",
-                        wanted(&d),
+                        requirement_text(&dependency),
                         info.version
                     ));
                 }
@@ -1771,7 +1812,7 @@ impl Workspace {
         let mut numbers: HashMap<u8, String> = HashMap::new();
         for entry in installed
             .values()
-            .filter(|e| e.name != info.name)
+            .filter(|entry| entry.name != info.name)
             .chain([info])
         {
             for (key, number) in &entry.craft_type_numbers {
@@ -1795,11 +1836,11 @@ impl Workspace {
     }
 
     /// The files to install for a mod, as records (path, size, hash) of its build.
-    fn file_records(out: &Path, relative: &[String]) -> Result<Vec<FileRecord>> {
+    fn file_records(build_folder: &Path, relative: &[String]) -> Result<Vec<FileRecord>> {
         relative
             .iter()
             .map(|path| {
-                let (size, sha256) = hash(&out.join(path))?;
+                let (size, sha256) = hash(&build_folder.join(path))?;
                 Ok(FileRecord {
                     path: path.clone(),
                     size,
@@ -1827,10 +1868,9 @@ impl Workspace {
         let mut problems = vec![];
         for file in new_files {
             let full = files.resolve(&file.path)?;
-            if let Some((owner, _)) = manifests
-                .iter()
-                .find(|(owner, m)| owner != name && m.files.iter().any(|f| f.path == file.path))
-            {
+            if let Some((owner, _)) = manifests.iter().find(|(owner, manifest)| {
+                owner != name && manifest.files.iter().any(|listed| listed.path == file.path)
+            }) {
                 problems.push(format!("{} belongs to the mod {owner}", file.path));
                 continue;
             }
@@ -1841,8 +1881,12 @@ impl Workspace {
             if !full.exists() {
                 continue;
             }
-            match previous.and_then(|manifest| manifest.files.iter().find(|f| f.path == file.path))
-            {
+            match previous.and_then(|manifest| {
+                manifest
+                    .files
+                    .iter()
+                    .find(|listed| listed.path == file.path)
+            }) {
                 Some(old) if files.state(old)? == State::Unchanged => {}
                 Some(_) => problems.push(format!(
                     "{} has changed since {name} installed it (move it away, or uninstall {name} \
@@ -1907,36 +1951,46 @@ impl Workspace {
             );
         }
         if with_dependencies {
-            for d in mod_.requires.iter().filter(|d| d.kind.needed()) {
-                let current = self.record()?.mods.get(&d.name).cloned();
-                let local = self.mods.join(&d.name).join("mod.json");
+            for dependency in mod_
+                .requires
+                .iter()
+                .filter(|dependency| dependency.kind.is_required())
+            {
+                let current = self.record()?.mods.get(&dependency.name).cloned();
+                let local = self.mods.join(&dependency.name).join("mod.json");
                 let newer = match (&current, local.exists()) {
-                    (Some(current), true) => Mod::load(&self.mods.join(&d.name))
+                    (Some(current), true) => Mod::load(&self.mods.join(&dependency.name))
                         .ok()
-                        .and_then(|local| parse_version(&local.version, &d.name).ok())
+                        .and_then(|local| parse_version(&local.version, &dependency.name).ok())
                         .is_some_and(|local| {
                             current.version().is_ok_and(|installed| local > installed)
                         }),
                     _ => false,
                 };
-                let unmet = current
-                    .as_ref()
-                    .is_none_or(|current| current.version().is_ok_and(|v| !satisfies(v, d)));
+                let unmet = current.as_ref().is_none_or(|current| {
+                    current
+                        .version()
+                        .is_ok_and(|version| !satisfies(version, dependency))
+                });
                 if unmet || newer {
+                    // the tool carries its own Lua library, for mods that depend on it
+                    if !local.exists() && dependency.name == "AlchemistsLibrary" {
+                        crate::probe::write_library(&self.mods)?;
+                    }
                     if !local.exists() {
                         bail!(
                             "{} needs {}, which isn't in the mods folder",
                             mod_.name,
-                            wanted(d)
+                            requirement_text(dependency)
                         );
                     }
                     let mut chain = installing.to_vec();
                     chain.push(mod_.name.clone());
-                    self.install(&Mod::load(&self.mods.join(&d.name))?, true, &chain)?;
+                    self.install(&Mod::load(&self.mods.join(&dependency.name))?, true, &chain)?;
                 }
             }
         }
-        let (out, info) = self.build_mod(mod_)?;
+        let (build_folder, info) = self.build_mod(mod_)?;
         if info.needs_ue4ss && !join(&self.game.root, UE4SS_FOLDER).is_dir() {
             bail!(
                 "{} needs UE4SS, and it isn't installed in {}",
@@ -1947,7 +2001,7 @@ impl Workspace {
         let files = GameFiles::new(&self.game.root)?;
         let mut record = self.record()?;
         self.check_installable(&info, &record.mods)?;
-        let new_files = Self::file_records(&out, &info.files)?;
+        let new_files = Self::file_records(&build_folder, &info.files)?;
         let manifests = files.manifests()?;
         self.check_files_free(&files, &info.name, &new_files, &record, &manifests)?;
         // this mod's old files that the new version doesn't have, deleted once it's in
@@ -1971,7 +2025,7 @@ impl Workspace {
             if let Some(parent) = target.parent() {
                 std::fs::create_dir_all(parent)?;
             }
-            std::fs::copy(out.join(&file.path), &target)
+            std::fs::copy(build_folder.join(&file.path), &target)
                 .with_context(|| format!("installing {}", file.path))?;
         }
         let gone = files.delete_listed(&stale, false)?;
@@ -2022,7 +2076,7 @@ impl Workspace {
             .chain(record.generated.keys().cloned())
             .collect();
         let prefix = PAK_FOLDER.join("/");
-        let mut out: Vec<String> = std::fs::read_dir(self.paks())
+        let mut containers: Vec<String> = std::fs::read_dir(self.mods_paks_folder())
             .into_iter()
             .flatten()
             .flatten()
@@ -2035,18 +2089,18 @@ impl Workspace {
                     .unwrap_or(name)
             })
             .collect();
-        out.sort();
-        out.dedup();
-        Ok(out)
+        containers.sort();
+        containers.dedup();
+        Ok(containers)
     }
 
     /// Files that look like a mod's by their names, for a mod no manifest or record describes.
     fn files_named_for(&self, name: &str) -> Vec<String> {
         let prefix = PAK_FOLDER.join("/");
-        let mut out: Vec<String> = [
+        let mut files: Vec<String> = [
             data_container(name),
             content_container(name),
-            save_pak(name),
+            save_container(name),
         ]
         .iter()
         .flat_map(|base| {
@@ -2055,12 +2109,12 @@ impl Workspace {
         .filter(|relative| self.game.root.join(relative).is_file())
         .collect();
         let ue4ss = UE4SS_FOLDER.join("/");
-        out.extend(
+        files.extend(
             files_below(&join(&self.game.root, UE4SS_FOLDER).join(name))
                 .into_iter()
                 .map(|file| format!("{ue4ss}/{name}/{file}")),
         );
-        out
+        files
     }
 
     pub fn uninstall(&self, name: &str, force: bool) -> Result<()> {
@@ -2078,11 +2132,11 @@ impl Workspace {
             .manifests()?
             .into_iter()
             .find(|(owner, _)| owner == name)
-            .map(|(_, m)| m);
+            .map(|(_, manifest)| manifest);
         let entry = record.mods.get(name).cloned();
         if manifest.is_none() && entry.is_none() {
-            let found = self.files_named_for(name);
-            if found.is_empty() {
+            let named_files = self.files_named_for(name);
+            if named_files.is_empty() {
                 println!("{name} is not installed");
                 return Ok(());
             }
@@ -2091,20 +2145,21 @@ impl Workspace {
                     "{name} wasn't installed by this tool (no manifest or record), so there's \
                     nothing to \
                      confirm these are its files:\n   {}\npass --force to delete them",
-                    found.join("\n   ")
+                    named_files.join("\n   ")
                 );
             }
-            for path in files.delete_unlisted(&found)? {
+            for path in files.delete_unlisted(&named_files)? {
                 println!("removed {path}");
             }
             return Ok(());
         }
         let mut needs = vec![];
-        for (other, e) in &record.mods {
+        for (other, other_entry) in &record.mods {
             if other != name
-                && e.requires()?
+                && other_entry
+                    .requires()?
                     .iter()
-                    .any(|d| d.name == name && d.kind.needed())
+                    .any(|dependency| dependency.name == name && dependency.kind.is_required())
             {
                 needs.push(other.clone());
             }
@@ -2174,8 +2229,8 @@ impl Workspace {
             );
         }
         let buildings = manifest
-            .map(|m| m.new_buildings)
-            .or(entry.map(|e| e.new_buildings))
+            .map(|manifest| manifest.new_buildings)
+            .or(entry.map(|recorded| recorded.new_buildings))
             .unwrap_or_default();
         if !buildings.is_empty() {
             println!(
@@ -2259,7 +2314,7 @@ impl Workspace {
         let unmanifested: Vec<&Entry> = record
             .mods
             .values()
-            .filter(|e| !manifests.iter().any(|(n, _)| *n == e.name))
+            .filter(|entry| !manifests.iter().any(|(owner, _)| *owner == entry.name))
             .collect();
         if !unmanifested.is_empty() {
             println!("\n== recorded without a manifest (installed by mods.py or an older version)");
@@ -2287,9 +2342,11 @@ impl Workspace {
             // a record from before the tool kept hashes (mods.py): its merged files are the tool's,
             // and the next install or uninstall records them
             let prefix = PAK_FOLDER.join("/");
-            let legacy: Vec<String> = [data_container(MERGED), save_pak(MERGED_SAVE)]
+            let legacy: Vec<String> = [data_container(MERGED), save_container(MERGED_SAVE)]
                 .iter()
-                .flat_map(|base| ["pak", "ucas", "utoc"].map(|e| format!("{prefix}/{base}.{e}")))
+                .flat_map(|base| {
+                    ["pak", "ucas", "utoc"].map(|extension| format!("{prefix}/{base}.{extension}"))
+                })
                 .filter(|path| !record.mods.is_empty() && self.game.root.join(path).is_file())
                 .collect();
             if legacy.is_empty() {
@@ -2375,17 +2432,26 @@ impl Workspace {
             // what it holds: the IoStore container's packages, else a .pak's files
             let source = ["utoc", "pak"]
                 .into_iter()
-                .find(|e| extensions.iter().any(|x| x == e));
+                .find(|extension| extensions.iter().any(|listed| listed == extension));
             let contents = source
-                .map(|e| container_contents(&self.game.root.join(format!("{stem}.{e}"))))
+                .map(|extension| {
+                    container_contents(&self.game.root.join(format!("{stem}.{extension}")))
+                })
                 .unwrap_or_default();
             let mut replaces: Vec<&String> = contents
                 .iter()
-                .filter(|p| game_packages.contains(*p))
+                .filter(|package| game_packages.contains(*package))
                 .collect();
             replaces.sort();
-            let shown: Vec<&str> = replaces.iter().take(6).map(|p| p.as_str()).collect();
-            let listed: Vec<String> = extensions.iter().map(|e| format!(".{e}")).collect();
+            let shown: Vec<&str> = replaces
+                .iter()
+                .take(6)
+                .map(|package| package.as_str())
+                .collect();
+            let listed: Vec<String> = extensions
+                .iter()
+                .map(|extension| format!(".{extension}"))
+                .collect();
             println!(
                 "   {stem} ({}){}",
                 listed.join(" "),
@@ -2451,17 +2517,20 @@ impl Workspace {
 
     // --- sharing ---
 
-    pub fn readme(mod_: &Mod, info: &Entry) -> String {
+    pub fn readme_for_zip(mod_: &Mod, info: &Entry) -> String {
         let mut by_kind: IndexMap<&str, Vec<String>> = IndexMap::new();
-        for d in &mod_.requires {
-            let heading = match d.kind {
+        for dependency in &mod_.requires {
+            let heading = match dependency.kind {
                 Kind::Required | Kind::Unordered => "Requires",
                 Kind::Recommended => "Recommended",
                 Kind::Optional => "Works with",
                 Kind::Incompatible => "Doesn't work with",
                 Kind::HiddenOptional => continue,
             };
-            by_kind.entry(heading).or_default().push(wanted(d));
+            by_kind
+                .entry(heading)
+                .or_default()
+                .push(requirement_text(dependency));
         }
         let mut lines = vec![format!(
             "{} {}{}",
@@ -2515,8 +2584,8 @@ impl Workspace {
         let needed: Vec<&str> = mod_
             .requires
             .iter()
-            .filter(|d| d.kind.needed())
-            .map(|d| d.name.as_str())
+            .filter(|dependency| dependency.kind.is_required())
+            .map(|dependency| dependency.name.as_str())
             .collect();
         if !info.tables.is_empty() {
             lines.push(format!(
@@ -2589,7 +2658,7 @@ impl Workspace {
         lines.join("\r\n")
     }
 
-    pub fn dist(&self, mod_: &Mod, out: &Path, info: &Entry) -> Result<PathBuf> {
+    pub fn dist(&self, mod_: &Mod, build_folder: &Path, info: &Entry) -> Result<PathBuf> {
         use std::io::Write;
         let path = self
             .build
@@ -2600,9 +2669,9 @@ impl Workspace {
         let mut listed = vec![];
         for relative in info.data_files.iter().chain(&info.files) {
             zip.start_file(relative, options)?;
-            let data = std::fs::read(out.join(relative))?;
+            let data = std::fs::read(build_folder.join(relative))?;
             zip.write_all(&data)?;
-            let (size, sha256) = hash(&out.join(relative))?;
+            let (size, sha256) = hash(&build_folder.join(relative))?;
             listed.push(FileRecord {
                 path: relative.clone(),
                 size,
@@ -2614,7 +2683,7 @@ impl Workspace {
         zip.start_file(GameFiles::manifest_path(&mod_.name), options)?;
         zip.write_all((serde_json::to_string_pretty(&manifest)? + "\n").as_bytes())?;
         zip.start_file("README.txt", options)?;
-        zip.write_all(Self::readme(mod_, info).as_bytes())?;
+        zip.write_all(Self::readme_for_zip(mod_, info).as_bytes())?;
         zip.finish()?;
         println!("zipped -> {}", display_path(&path));
         Ok(path)
@@ -2653,8 +2722,8 @@ impl Workspace {
             .into_iter()
             .flatten()
             .flatten()
-            .map(|e| e.path())
-            .filter(|p| p.join("mod.json").exists())
+            .map(|folder_entry| folder_entry.path())
+            .filter(|path| path.join("mod.json").exists())
             .collect();
         folders.sort();
         for folder in folders {
@@ -2687,12 +2756,16 @@ mod tests {
 
     #[test]
     fn dependencies() {
-        let d = parse_dependency("VaultCore >= 0.2.0", "test").unwrap();
+        let dependency = parse_dependency("VaultCore >= 0.2.0", "test").unwrap();
         assert_eq!(
-            (d.kind, d.name.as_str(), d.version),
+            (
+                dependency.kind,
+                dependency.name.as_str(),
+                dependency.version
+            ),
             (Kind::Required, "VaultCore", Some((0, 2, 0)))
         );
-        assert!(satisfies((0, 2, 1), &d) && !satisfies((0, 1, 9), &d));
+        assert!(satisfies((0, 2, 1), &dependency) && !satisfies((0, 1, 9), &dependency));
         for (text, kind) in [
             ("? A", Kind::Optional),
             ("(?) A", Kind::HiddenOptional),
@@ -2717,18 +2790,21 @@ mod tests {
         let entry = |name: &str, dependencies: &[&str]| Entry {
             name: name.into(),
             version: "0.1.0".into(),
-            dependencies: dependencies.iter().map(|d| d.to_string()).collect(),
+            dependencies: dependencies
+                .iter()
+                .map(|dependency| dependency.to_string())
+                .collect(),
             ..Entry::default()
         };
         let mods: IndexMap<String, Entry> =
             [entry("B", &["A"]), entry("A", &[]), entry("C", &["~ B"])]
                 .into_iter()
-                .map(|e| (e.name.clone(), e))
+                .map(|entry| (entry.name.clone(), entry))
                 .collect();
         assert_eq!(load_order(&mods).unwrap(), ["A", "B", "C"]);
         let looped: IndexMap<String, Entry> = [entry("A", &["B"]), entry("B", &["A"])]
             .into_iter()
-            .map(|e| (e.name.clone(), e))
+            .map(|entry| (entry.name.clone(), entry))
             .collect();
         assert!(load_order(&looped)
             .unwrap_err()

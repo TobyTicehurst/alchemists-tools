@@ -1,0 +1,25 @@
+{
+  "_comment": "Changes to recipes the game already has. Row names are recipe IDs (see data/DataTables/DT_EnemyCrafting.json from alchemists-tools extract).",
+  "DT_EnemyCrafting": {
+    "WoodGear": {
+      "_comment": "Processor: 1 Large Wooden Gear -> 4 Small Wooden Gears (was 3). Only the field given changes: the ingredient, time and craft type stay.",
+      "ProductInfo": {"Count": 4}
+    },
+    "LinseedOil": {
+      "_comment": "Extractor: 1 Flax -> 30 Linseed Oil (was 20)",
+      "ProductInfo": {"Count": 30}
+    },
+    "WhisperingFields": {
+      "_comment": "Brew Barrel: 20 Linseed Oil + 80 Fruit Wine (was 40 + 80). A list is replaced whole, so both ingredients are given.",
+      "IngredientList": [
+        {"IngredientName": "LinseedOil", "Count": 20},
+        {"IngredientName": "FruitWine", "Count": 80}
+      ]
+    },
+    "Glass": {
+      "_comment": "Kiln: 3 Sand -> 1 Glass (was 6), in 4 s (was 6 s)",
+      "IngredientList": [{"IngredientName": "Sand", "Count": 3}],
+      "CraftingTime": 4.0
+    }
+  }
+}

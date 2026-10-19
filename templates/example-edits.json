@@ -2,10 +2,10 @@
   "_comment": [
     "An example edit file. Nothing here applies yet: a name starting with _ is skipped, like a comment.",
     "To use an edit, remove the _ from its table's name (e.g. _DT_EnemyCrafting -> DT_EnemyCrafting).",
-    "A file is {table: {row: {field: new value}}}, with tables, rows and fields as in data/raw/.",
+    "A file is {table: {row: {field: new value}}}, with tables, rows and fields as in the files alchemists-tools extract writes to data/.",
     "Only the fields you give change; objects merge field by field, and lists are replaced whole.",
     "Every edit file in edits/ is read, in alphabetical order. Delete this one when you're done with it.",
-    "MODDING.md has the rest: new recipes, buildings and research, and the checks the build makes."
+    "docs/MODDING.md in the alchemists-tools repository (github.com/TobyTicehurst/alchemists-tools) has the rest: new recipes, buildings and research, and the checks the build makes."
   ],
   "_DT_EnemyCrafting": {
     "WoodGear": {

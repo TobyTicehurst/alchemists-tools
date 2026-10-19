@@ -1,3 +1,7 @@
 /target
 # game files: extracted locally, never committed
 /data
+# made when the examples are built or installed from the repo
+/build
+/examples/AlchemistsLibrary
+/examples/allocations.json

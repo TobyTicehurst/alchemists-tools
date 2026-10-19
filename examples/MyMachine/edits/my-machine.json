@@ -1,0 +1,37 @@
+{
+  "_comment": "A building row for /Game/Mods/MyMachine/BP_MyMachine, and the research that unlocks it. Same footprint and ports as the Processor.",
+  "DT_Buildings": {
+    "MyMachine": {
+      "_comment": "Costs 1 Plank so it can be told apart from the Processor in the build menu",
+      "_copy": "Processor",
+      "ID": 220,
+      "ScriptClass": "/Game/Mods/MyMachine/BP_MyMachine.BP_MyMachine_C",
+      "AlterBuildOption": "None",
+      "CostList": [
+        {
+          "IngredientName": "WoodBoard",
+          "Count": 1
+        }
+      ],
+      "DisplayName": "My Machine",
+      "DisplayDesc": "A test machine: an Assembler in a Processor's body. One conveyor belt input and one conveyor belt output."
+    }
+  },
+  "DT_SkillPoints": {
+    "MyMachine": {
+      "_comment": "One row below the Processor's research",
+      "_copy": "Processor",
+      "SlotPosition": {
+        "X": -2,
+        "Y": 4
+      },
+      "Predecessors": [
+        "Processor"
+      ],
+      "UnlockItem": {
+        "ConfigName": "MyMachine",
+        "ConfigType": "ConstructOptions"
+      }
+    }
+  }
+}

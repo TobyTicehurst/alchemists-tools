@@ -1,0 +1,7 @@
+{
+  "name": "ExampleBuildings",
+  "title": "Example: Buildings",
+  "version": "0.1.0",
+  "description": "The worked example in docs/examples/buildings.md: a cheaper Kiln that uses less heat, and a new building, the Stone Processor (a Processor built from Stone), with its research.",
+  "author": ""
+}
