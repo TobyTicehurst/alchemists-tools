@@ -9,3 +9,6 @@ license.workspace = true
 alchemists-core.workspace = true
 anyhow.workspace = true
 clap.workspace = true
+indexmap.workspace = true
+retoc.workspace = true
+serde_json.workspace = true

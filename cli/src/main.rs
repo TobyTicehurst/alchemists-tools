@@ -1,8 +1,8 @@
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use alchemists_core::game::{display_path, Game};
-use alchemists_core::{datatable, extract, json};
+use alchemists_core::{datatable, edits, extract, json, package, unpack};
 use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand};
 
@@ -33,6 +33,174 @@ enum Command {
         /// Asset name, e.g. DT_Enemies
         name: String,
     },
+    /// Pack content cooked in the stub Unreal project (Blueprints, meshes, textures) as a mod
+    /// container
+    PackageContent {
+        /// /Game/ folders or assets, e.g. /Game/Mods/MyMachine
+        paths: Vec<String>,
+        /// Mod name: the container is zzz_<name>_P
+        #[arg(long)]
+        name: String,
+        /// Set a Blueprint's FactoryCraftType, by name (Max) or number (26): BP_MyMachine=26
+        #[arg(long = "craft-type", value_name = "ASSET=VALUE")]
+        craft_types: Vec<String>,
+        /// The stub project's .uproject
+        /// [default: Documents/Unreal Projects/AlchemyFactory/AlchemyFactory.uproject]
+        #[arg(long)]
+        project: Option<PathBuf>,
+        /// Allow paths outside /Game/Mods, e.g. to override a game Blueprint for a test
+        #[arg(long)]
+        allow_game_paths: bool,
+        /// Package even if assets were saved in the editor after the last cook
+        #[arg(long)]
+        allow_stale: bool,
+        /// Output directory
+        #[arg(long, default_value = "build")]
+        out: PathBuf,
+    },
+    /// Build, install and share mods kept as folders (see `mod --help`)
+    Mod {
+        #[command(subcommand)]
+        action: ModAction,
+        /// The folder of mod folders
+        #[arg(long, global = true, default_value = "mods")]
+        mods: PathBuf,
+        /// Where builds go
+        #[arg(long, global = true, default_value = "build")]
+        build: PathBuf,
+        /// The stub project's .uproject, for mods with cooked content
+        /// [default: Documents/Unreal Projects/AlchemyFactory/AlchemyFactory.uproject]
+        #[arg(long, global = true)]
+        project: Option<PathBuf>,
+    },
+    /// After a game update: check the dumps, re-extract, rebuild the stub project, compare the
+    /// Blueprints mods copy, and rebuild and re-merge the mods
+    Update {
+        /// Where `extract` writes the game's data
+        #[arg(long, default_value = "data")]
+        data: PathBuf,
+        /// The folder of mod folders
+        #[arg(long, default_value = "mods")]
+        mods: PathBuf,
+        /// Where builds go (and the last update's record, in .update/)
+        #[arg(long, default_value = "build")]
+        build: PathBuf,
+        /// The stub project's .uproject
+        /// [default: Documents/Unreal Projects/AlchemyFactory/AlchemyFactory.uproject]
+        #[arg(long)]
+        project: Option<PathBuf>,
+        /// The Unreal Engine install, for rebuilding the stub project
+        #[arg(long, default_value = "C:/Program Files/Epic Games/UE_5.7")]
+        engine: PathBuf,
+        /// Don't rebuild the stub project's BeltTD module
+        #[arg(long)]
+        skip_stub: bool,
+        /// Redo every step even if the game build is unchanged
+        #[arg(long)]
+        force: bool,
+        /// Go on when the .usmap or header dump is older than the game
+        #[arg(long)]
+        allow_old_dumps: bool,
+    },
+    /// Write a UE4SS probe mod: logging hooks for game functions, e.g.
+    /// probe VaultProbe "BeltTDInventoryComponent:Server_*"
+    Probe {
+        /// The probe mod's name (its folder in the mods folder)
+        name: String,
+        /// <Class>:<Function> (wildcards allowed in the function), or a Blueprint function's path
+        functions: Vec<String>,
+        /// Also log each new object of this class (a /Script/ or /Game/ class path)
+        #[arg(long = "new-object", value_name = "CLASS")]
+        new_objects: Vec<String>,
+        /// Calls per function logged in full
+        #[arg(long, default_value_t = 50)]
+        limit: usize,
+        /// Overwrite an earlier probe of the same name
+        #[arg(long)]
+        force: bool,
+        /// The folder of mod folders
+        #[arg(long, default_value = "mods")]
+        mods: PathBuf,
+    },
+    /// Apply a folder of edit files to the game's tables, as a mod container
+    BuildTables {
+        /// Folder with the edit files (*.json, read in alphabetical order)
+        folder: PathBuf,
+        /// Mod name: the container is zzz_<name>_P [default: the folder's name]
+        #[arg(long)]
+        name: Option<String>,
+        /// Output directory
+        #[arg(long, default_value = "build")]
+        out: PathBuf,
+    },
+}
+
+#[derive(Subcommand)]
+enum ModAction {
+    /// Start a mod folder with a mod.json
+    New { name: String },
+    /// Build everything a mod has into <build>/<name>/
+    Build { name: String },
+    /// Build a mod, then install it into the game (merging every installed mod's tables)
+    Install {
+        name: String,
+        /// Also build and install the mods it requires, from the mods folder
+        #[arg(long)]
+        with_dependencies: bool,
+    },
+    /// Remove a mod from the game: only the files its manifest lists, and only while they're as it
+    /// installed them
+    Uninstall {
+        name: String,
+        /// Also delete its files that have changed since it installed them; uninstall even if
+        /// installed mods require it; delete the files of a mod this tool didn't install
+        #[arg(long)]
+        force: bool,
+    },
+    /// Build a mod, then zip it for players: <build>/<name>_<version>.zip
+    Dist { name: String },
+    /// The mods in the mods folder, and what is installed
+    List,
+    /// Every mod in the game folder, whether its files are as installed, and what else is there
+    Scan,
+}
+
+fn default_project() -> PathBuf {
+    let home = std::env::var_os("USERPROFILE").unwrap_or_default();
+    PathBuf::from(home).join("Documents/Unreal Projects/AlchemyFactory/AlchemyFactory.uproject")
+}
+
+fn mod_command(
+    game: Game,
+    usmap: PathBuf,
+    action: ModAction,
+    mods: PathBuf,
+    build: PathBuf,
+    project: Option<PathBuf>,
+) -> Result<()> {
+    let workspace = alchemists_core::mods::Workspace::new(
+        mods,
+        build,
+        game,
+        usmap,
+        project.unwrap_or_else(default_project),
+    );
+    match action {
+        ModAction::New { name } => workspace.new_mod(&name),
+        ModAction::List => workspace.list(),
+        ModAction::Scan => workspace.scan(),
+        ModAction::Uninstall { name, force } => workspace.uninstall(&name, force),
+        ModAction::Build { name } => workspace.build_mod(&workspace.load(&name)?).map(|_| ()),
+        ModAction::Install {
+            name,
+            with_dependencies,
+        } => workspace.install(&workspace.load(&name)?, with_dependencies, &[]),
+        ModAction::Dist { name } => {
+            let found = workspace.load(&name)?;
+            let (out, info) = workspace.build_mod(&found)?;
+            workspace.dist(&found, &out, &info).map(|_| ())
+        }
+    }
 }
 
 fn main() -> Result<()> {
@@ -64,6 +232,78 @@ fn main() -> Result<()> {
             println!("out: {}", display_path(&out));
             extract::extract(&game, &usmap, &out)
         }
+        Command::PackageContent {
+            paths,
+            name,
+            craft_types,
+            project,
+            allow_game_paths,
+            allow_stale,
+            out,
+        } => package_content(
+            &game,
+            &usmap,
+            &paths,
+            &name,
+            &craft_types,
+            project,
+            allow_game_paths,
+            allow_stale,
+            &out,
+        ),
+        Command::Mod {
+            action,
+            mods,
+            build,
+            project,
+        } => mod_command(game, usmap, action, mods, build, project),
+        Command::Update {
+            data,
+            mods,
+            build,
+            project,
+            engine,
+            skip_stub,
+            force,
+            allow_old_dumps,
+        } => {
+            let project = project.unwrap_or_else(default_project);
+            let workspace =
+                alchemists_core::mods::Workspace::new(mods, build, game, usmap, project);
+            let options = alchemists_core::update::Options {
+                data,
+                engine,
+                skip_stub,
+                force,
+                allow_old_dumps,
+            };
+            alchemists_core::update::update(&workspace, &options)
+        }
+        Command::Probe {
+            name,
+            functions,
+            new_objects,
+            limit,
+            force,
+            mods,
+        } => {
+            let schemas = alchemists_core::usmap::read_usmap(&usmap)?;
+            let probe = alchemists_core::probe::write_probe;
+            probe(
+                &game,
+                &schemas,
+                &mods,
+                &name,
+                &functions,
+                &new_objects,
+                limit,
+                force,
+            )
+            .map(|_| ())
+        }
+        Command::BuildTables { folder, name, out } => {
+            build_tables(&game, &usmap, &folder, name, &out)
+        }
         Command::Decode { name } => {
             let assets = extract::named_tables(&game, &name)?;
             let path = match assets.find(&name).as_slice() {
@@ -80,4 +320,187 @@ fn main() -> Result<()> {
             }
         }
     }
+}
+
+fn build_tables(
+    game: &Game,
+    usmap: &Path,
+    folder: &Path,
+    name: Option<String>,
+    out: &Path,
+) -> Result<()> {
+    let name = match name {
+        Some(name) => name,
+        None => folder
+            .file_name()
+            .and_then(|name| name.to_str())
+            .context("give the mod a --name")?
+            .to_string(),
+    };
+    let mut files: Vec<PathBuf> = std::fs::read_dir(folder)
+        .with_context(|| format!("reading {}", display_path(folder)))?
+        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+        .filter(|path| {
+            path.extension()
+                .is_some_and(|extension| extension == "json")
+        })
+        .collect();
+    files.sort();
+    let mut sources = vec![];
+    for file in &files {
+        let text = std::fs::read_to_string(file)
+            .with_context(|| format!("reading {}", display_path(file)))?;
+        let contents = serde_json::from_str(&text)
+            .with_context(|| format!("{} isn't valid JSON", display_path(file)))?;
+        let label = file.file_name().unwrap().to_string_lossy().into_owned();
+        sources.push(edits::Source { label, contents });
+    }
+    let labels: Vec<&str> = sources.iter().map(|source| source.label.as_str()).collect();
+    println!(
+        "edit files: {}",
+        if labels.is_empty() {
+            "(none)".to_string()
+        } else {
+            labels.join(", ")
+        }
+    );
+
+    let schemas = alchemists_core::usmap::read_usmap(usmap)?;
+    let assets = extract::content_assets(game)?;
+    let localizer = extract::english(game, &assets)?;
+    let packages = unpack::package_names(&game.paks())?;
+    let input = edits::Game {
+        assets: &assets,
+        schemas: &schemas,
+        localizer: Some(&localizer),
+        packages: Some(&packages),
+    };
+    let built = match edits::build(&input, &sources) {
+        Ok(built) => built,
+        Err(error) => {
+            eprintln!("errors:");
+            for line in format!("{error:#}").lines() {
+                eprintln!("   {line}");
+            }
+            std::process::exit(1);
+        }
+    };
+    let utoc = out.join(&name).join(format!("zzz_{name}_P.utoc"));
+    if let Some(folder) = utoc.parent() {
+        let _ = std::fs::remove_dir_all(folder);
+    }
+    if !built.tables.is_empty() {
+        package::write_container(
+            &utoc,
+            &built.tables,
+            retoc::version::EngineVersion::UE5_6,
+            package::script_objects(game)?,
+        )?;
+        package::check_container(&utoc, &built.tables, game)?;
+    }
+    let rows: usize = built.changed.values().map(|rows| rows.len()).sum();
+    println!(
+        ".pak mod: {rows} row(s) in {} table(s), checked -> {}",
+        built.changed.len(),
+        display_path(&utoc)
+    );
+    for line in &built.report {
+        println!("   {line}");
+    }
+    for warning in &built.warnings {
+        println!("   warning: {warning}");
+    }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn package_content(
+    game: &Game,
+    usmap: &Path,
+    paths: &[String],
+    name: &str,
+    craft_types: &[String],
+    project: Option<PathBuf>,
+    allow_game_paths: bool,
+    allow_stale: bool,
+    out: &Path,
+) -> Result<()> {
+    use alchemists_core::content;
+    // Git Bash turns /Game/... into C:/Program Files/Git/Game/...; take the /Game/ part back
+    let paths: Vec<String> = paths
+        .iter()
+        .map(|path| {
+            let path = path.replace('\\', "/");
+            match path.find("/Game/") {
+                Some(at) => path[at..].to_string(),
+                None => path,
+            }
+        })
+        .collect();
+    content::check_paths(&paths, allow_game_paths)?;
+    let project = match project {
+        Some(project) => project,
+        None => {
+            let home = std::env::var_os("USERPROFILE").context("no USERPROFILE; give --project")?;
+            PathBuf::from(home)
+                .join("Documents/Unreal Projects/AlchemyFactory/AlchemyFactory.uproject")
+        }
+    };
+    if !project.exists() {
+        bail!(
+            "{} doesn't exist; give the stub project with --project",
+            display_path(&project)
+        );
+    }
+    let schemas = alchemists_core::usmap::read_usmap(usmap)?;
+    let mut wanted = indexmap::IndexMap::new();
+    for item in craft_types {
+        let (asset, value) = item
+            .split_once('=')
+            .context("--craft-type is ASSET=VALUE")?;
+        wanted.insert(
+            asset.to_string(),
+            content::craft_type_number(value, &schemas)?,
+        );
+    }
+    let stale: Vec<String> = paths
+        .iter()
+        .flat_map(|path| content::stale_cooks(&project, path))
+        .collect();
+    if !stale.is_empty() {
+        let message = format!("the cook is out of date for:\n   {}", stale.join("\n   "));
+        if !allow_stale {
+            bail!(
+                "{message}\ncook again (Platforms -> Windows -> Cook Content), or pass \
+                --allow-stale"
+            );
+        }
+        println!("warning: {message}");
+    }
+    let mut staged = content::stage(&project, &paths)?;
+    let listed: Vec<&str> = staged.iter().map(|asset| asset.path.as_str()).collect();
+    println!("staged {} asset(s): {}", staged.len(), listed.join(", "));
+    for (asset, &value) in &wanted {
+        let found = staged
+            .iter_mut()
+            .find(|staged| staged.path.rsplit('/').next() == Some(asset.as_str()))
+            .with_context(|| {
+                format!("craft type for {asset}: no {asset} among the staged assets")
+            })?;
+        let old = content::patch_craft_type(found, value)?;
+        println!("   craft type {old} -> {value} in {asset}");
+    }
+    let utoc = out.join(name).join(format!("zzz_{name}_P.utoc"));
+    if let Some(folder) = utoc.parent() {
+        let _ = std::fs::remove_dir_all(folder);
+    }
+    let packaged = content::package(&utoc, &staged, game, &schemas, &wanted)?;
+    println!("packed -> {}; checked:", display_path(&utoc));
+    for (package, components) in &packaged.components {
+        println!("   {package}:");
+        for component in components {
+            println!("      {}", content::describe(component));
+        }
+    }
+    Ok(())
 }

@@ -1,0 +1,7 @@
+{
+  "name": "AlchemistsLibrary",
+  "title": "Alchemist's Library",
+  "version": "0.2.3",
+  "description": "Shared Lua helpers for UE4SS mods of Alchemy Factory: logging, game-thread calls, finding placed buildings and their rows, and helpers that keep lockstep multiplayer in step. Mods that need it list it as a dependency.",
+  "author": ""
+}

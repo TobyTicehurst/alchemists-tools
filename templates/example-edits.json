@@ -1,0 +1,39 @@
+{
+  "_comment": [
+    "An example edit file. Nothing here applies yet: a name starting with _ is skipped, like a comment.",
+    "To use an edit, remove the _ from its table's name (e.g. _DT_EnemyCrafting -> DT_EnemyCrafting).",
+    "A file is {table: {row: {field: new value}}}, with tables, rows and fields as in data/raw/.",
+    "Only the fields you give change; objects merge field by field, and lists are replaced whole.",
+    "Every edit file in edits/ is read, in alphabetical order. Delete this one when you're done with it.",
+    "MODDING.md has the rest: new recipes, buildings and research, and the checks the build makes."
+  ],
+  "_DT_EnemyCrafting": {
+    "WoodGear": {
+      "_comment": "Processor: 1 Large Wooden Gear -> 4 Small Wooden Gears (was 3)",
+      "ProductInfo": {"Count": 4}
+    },
+    "LargeWoodGear": {
+      "_comment": "Grinder: 3 s per Large Wooden Gear (was 6 s)",
+      "CraftingTime": 3.0
+    },
+    "WhisperingFields": {
+      "_comment": "Brew Barrel: 20 Linseed Oil + 80 Fruit Wine (was 40 + 80); a list is given whole",
+      "IngredientList": [
+        {"IngredientName": "LinseedOil", "Count": 20},
+        {"IngredientName": "FruitWine", "Count": 80}
+      ]
+    }
+  },
+  "_DT_PlantSeedConfig": {
+    "FlaxSeed": {
+      "_comment": "Nursery: Flax needs 12 V of fertilizer (was 24)",
+      "GrowthNutrientValue": 12.0
+    }
+  },
+  "_DT_Quests": {
+    "Main2": {
+      "_comment": "The second main quest asks for 25 Linen Rope (was 50)",
+      "RequireProducts": {"Nums": [25]}
+    }
+  }
+}
