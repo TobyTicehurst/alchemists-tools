@@ -1,11 +1,22 @@
 //! Reading and writing Alchemy Factory (UE 5.7) game files.
 
+pub mod blueprint;
+pub mod content;
 pub mod datatable;
+pub mod edits;
 pub mod extract;
+pub mod facts;
+pub mod files;
 pub mod game;
 pub mod json;
+pub mod mods;
+pub mod package;
+pub mod probe;
 pub mod reader;
+pub mod save;
 pub mod schema;
 pub mod text;
 pub mod unpack;
+pub mod update;
 pub mod usmap;
+pub mod write;

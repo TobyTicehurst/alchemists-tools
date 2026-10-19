@@ -84,7 +84,7 @@ impl Assets {
 }
 
 /// retoc's messages, kept off stdout (which may be JSON output).
-struct Stderr;
+pub struct Stderr;
 
 impl LogBackend for Stderr {
     fn write_message(&self, level: LogLevel, message: &str) {
@@ -155,6 +155,25 @@ pub fn legacy_assets(
         }
     }
     Ok(assets)
+}
+
+/// The `/Game/` packages in the containers in `paks`, e.g.
+/// `/Game/Arts/UI/Furnitures/T_UI_Processor`.
+pub fn package_names(paks: &Path) -> Result<std::collections::HashSet<String>> {
+    let store = retoc::iostore::open(paks, Arc::new(retoc::Config::default()))
+        .with_context(|| format!("opening the game containers in {}", display_path(paks)))?;
+    let mut out = std::collections::HashSet::new();
+    for package in store.packages() {
+        let chunk = FIoChunkId::from_package_id(package.id(), 0, EIoChunkType::ExportBundleData);
+        if let Some(path) = store.chunk_path(chunk) {
+            let path = path.strip_prefix("../../../").unwrap_or(&path);
+            if let Some(relative) = path.strip_prefix("AlchemyFactory/Content/") {
+                let package = relative.rsplit_once('.').map_or(relative, |(stem, _)| stem);
+                out.insert(format!("/Game/{package}"));
+            }
+        }
+    }
+    Ok(out)
 }
 
 /// One file from a `.pak`, by its path below the mount point.

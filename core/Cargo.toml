@@ -8,10 +8,15 @@ license.workspace = true
 [dependencies]
 anyhow.workspace = true
 indexmap.workspace = true
+oodle_loader.workspace = true
+regex.workspace = true
 repak.workspace = true
 retoc.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+sha2.workspace = true
+zip.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 winreg = "0.56"
+

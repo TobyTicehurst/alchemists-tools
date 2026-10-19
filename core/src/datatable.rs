@@ -1,6 +1,8 @@
 //! Decode cooked (unversioned-property) objects, such as DataTables and curves, from legacy
 //! `.uasset`/`.uexp` pairs. All layouts come from the schemas (a `.usmap`).
 
+use std::collections::HashMap;
+
 use anyhow::{bail, Context, Result};
 use serde_json::{json, Map, Value};
 
@@ -10,7 +12,7 @@ use crate::text::{Localizer, Text};
 
 /// Structs the engine serializes natively, as their fields in order with no property header, rather
 /// than as unversioned properties. Their fields come from the schemas like any other struct.
-const NATIVE_STRUCTS: &[&str] = &[
+pub const NATIVE_STRUCTS: &[&str] = &[
     "Color",
     "DeprecateSlateVector2D",
     "Guid",
@@ -46,6 +48,12 @@ fn store(out: &mut Map<String, Value>, property: &Property, element: usize, valu
     }
 }
 
+/// Where each decoded value was in the data: its path (property names and element indices joined
+/// by `/`, e.g. `Processor/GridConfigList/0/position`) -> (start, end). A property the header marks
+/// as zero has an empty span; one the file doesn't store has none. The table writer uses these to
+/// copy unchanged values byte for byte.
+pub type Spans = HashMap<String, (usize, usize)>;
+
 pub struct Decoder<'a> {
     pub reader: Reader<'a>,
     /// Resolves object references to paths.
@@ -53,6 +61,9 @@ pub struct Decoder<'a> {
     schemas: &'a Schemas,
     /// Resolve texts to strings; without one, texts are kept as objects with their keys.
     localizer: Option<&'a Localizer>,
+    /// Recorded when set (see [`Spans`]); `path` is where the value being decoded goes.
+    pub spans: Option<Spans>,
+    pub path: Vec<String>,
 }
 
 impl<'a> Decoder<'a> {
@@ -67,12 +78,26 @@ impl<'a> Decoder<'a> {
             package,
             schemas,
             localizer,
+            spans: None,
+            path: vec![],
         }
+    }
+
+    /// Decode a value as `key` below the current path, recording its span.
+    fn child<T>(&mut self, key: String, value: impl FnOnce(&mut Self) -> Result<T>) -> Result<T> {
+        self.path.push(key);
+        let start = self.reader.position;
+        let result = value(self);
+        if let (Some(spans), Ok(_)) = (&mut self.spans, &result) {
+            spans.insert(self.path.join("/"), (start, self.reader.position));
+        }
+        self.path.pop();
+        result
     }
 
     pub fn text(&mut self) -> Result<Value> {
         let reader = &mut self.reader;
-        reader.u32()?; // flags
+        let flags = reader.u32()?;
         let text = match reader.i8()? {
             -1 => Text::Plain(if reader.u32()? != 0 {
                 reader.fstring()?
@@ -93,9 +118,10 @@ impl<'a> Decoder<'a> {
                 reader.position
             ),
         };
-        Ok(match (self.localizer, text) {
-            (Some(localizer), text) => Value::String(localizer.text(&text)),
-            (None, Text::Plain(string)) => Value::String(string),
+        let mut value = match (self.localizer, text) {
+            (Some(localizer), text) => return Ok(Value::String(localizer.text(&text))),
+            (None, Text::Plain(string)) if flags == 0 => return Ok(Value::String(string)),
+            (None, Text::Plain(string)) => json!({"string": string}),
             (
                 None,
                 Text::Localized {
@@ -107,7 +133,12 @@ impl<'a> Decoder<'a> {
                 json!({"namespace": namespace, "key": key, "source": source})
             }
             (None, Text::Table { table, key }) => json!({"table": table, "key": key}),
-        })
+        };
+        // Kept as objects, texts keep their flags too, so they can be written back unchanged
+        if flags != 0 {
+            value["flags"] = json!(flags);
+        }
+        Ok(value)
     }
 
     /// An object's own data: its class's properties, then the `bHasGuid` flag (and GUID).
@@ -143,12 +174,15 @@ impl<'a> Decoder<'a> {
             let Some(&(property, element)) = properties.get(index) else {
                 bail!("{name}: property index {index} out of range")
             };
-            let value = if is_zero {
-                self.zero(property)?
-            } else {
-                self.value(property)
-                    .with_context(|| format!("{name}.{}", property.name))?
-            };
+            let value = self.child(property_key(property, element), |decoder| {
+                if is_zero {
+                    zero_value(decoder.schemas, property)
+                } else {
+                    decoder
+                        .value(property)
+                        .with_context(|| format!("{name}.{}", property.name))
+                }
+            })?;
             store(&mut out, property, element, value);
         }
         Ok(Value::Object(out))
@@ -156,7 +190,7 @@ impl<'a> Decoder<'a> {
 
     /// Every property of a struct at its zero value (fixed-size arrays as arrays of zeros).
     fn zero_struct(&self, name: &str) -> Result<Map<String, Value>> {
-        self.struct_of(name, |property| self.zero(property))
+        zero_struct(self.schemas, name)
     }
 
     /// Every property of a struct at the value `fill` gives it (fixed-size arrays as arrays of it).
@@ -165,48 +199,11 @@ impl<'a> Decoder<'a> {
         name: &str,
         fill: impl Fn(&Property) -> Result<Value>,
     ) -> Result<Map<String, Value>> {
-        let mut out = Map::new();
-        for (property, _) in self.schemas.all_properties(name)? {
-            if !out.contains_key(&property.name) {
-                let value = fill(property)?;
-                let value = match property.array_dimension {
-                    0 | 1 => value,
-                    count => Value::Array(vec![value; count as usize]),
-                };
-                out.insert(property.name.clone(), value);
-            }
-        }
-        Ok(out)
-    }
-
-    fn zero(&self, property: &Property) -> Result<Value> {
-        Ok(match property.type_name.as_str() {
-            "Struct" => match property.struct_name.as_deref().unwrap_or_default() {
-                "GameplayTagContainer" => json!([]),
-                struct_name => self.zero_struct(struct_name)?.into(),
-            },
-            "Enum" => self.enum_name(property, 0),
-            "Byte" if property.enum_name.is_some() => self.enum_name(property, 0),
-            "Byte" | "Int8" | "Int16" | "Int" | "Int64" | "UInt16" | "UInt32" | "UInt64" => {
-                json!(0)
-            }
-            "Float" | "Double" | "LargeWorldCoordinatesReal" => float(0.0),
-            "Bool" => json!(false),
-            "Name" => json!("None"),
-            "Str" | "Text" => json!(""),
-            "Array" | "Set" => json!([]),
-            "Map" => json!({}),
-            _ => Value::Null,
-        })
+        struct_of(self.schemas, name, fill)
     }
 
     fn enum_name(&self, property: &Property, value: i64) -> Value {
-        let name = property
-            .enum_name
-            .as_ref()
-            .and_then(|enum_name| self.schemas.enums.get(enum_name))
-            .and_then(|values| values.get(&value.to_string()));
-        name.map_or_else(|| json!(value), |name| json!(name))
+        enum_name(self.schemas, property, value)
     }
 
     fn value(&mut self, property: &Property) -> Result<Value> {
@@ -274,7 +271,7 @@ impl<'a> Decoder<'a> {
                     .context("container without inner property")?;
                 let count = self.reader.i32()?;
                 (0..count)
-                    .map(|_| self.element(inner))
+                    .map(|i| self.child(i.to_string(), |decoder| decoder.element(inner)))
                     .collect::<Result<Vec<_>>>()?
                     .into()
             }
@@ -317,8 +314,74 @@ impl<'a> Decoder<'a> {
     }
 }
 
+/// A property's key in a [`Spans`] path: its name, plus the element for a fixed-size array.
+pub fn property_key(property: &Property, element: usize) -> String {
+    if property.array_dimension > 1 {
+        format!("{}/{element}", property.name)
+    } else {
+        property.name.clone()
+    }
+}
+
+/// Every property of a struct at its zero value (fixed-size arrays as arrays of zeros).
+pub fn zero_struct(schemas: &Schemas, name: &str) -> Result<Map<String, Value>> {
+    struct_of(schemas, name, |property| zero_value(schemas, property))
+}
+
+/// Every property of a struct at the value `fill` gives it (fixed-size arrays as arrays of it).
+fn struct_of(
+    schemas: &Schemas,
+    name: &str,
+    fill: impl Fn(&Property) -> Result<Value>,
+) -> Result<Map<String, Value>> {
+    let mut out = Map::new();
+    for (property, _) in schemas.all_properties(name)? {
+        if !out.contains_key(&property.name) {
+            let value = fill(property)?;
+            let value = match property.array_dimension {
+                0 | 1 => value,
+                count => Value::Array(vec![value; count as usize]),
+            };
+            out.insert(property.name.clone(), value);
+        }
+    }
+    Ok(out)
+}
+
+/// The value a property has when the header marks it as zero.
+pub fn zero_value(schemas: &Schemas, property: &Property) -> Result<Value> {
+    Ok(match property.type_name.as_str() {
+        "Struct" => match property.struct_name.as_deref().unwrap_or_default() {
+            "GameplayTagContainer" => json!([]),
+            struct_name => zero_struct(schemas, struct_name)?.into(),
+        },
+        "Enum" => enum_name(schemas, property, 0),
+        "Byte" if property.enum_name.is_some() => enum_name(schemas, property, 0),
+        "Byte" | "Int8" | "Int16" | "Int" | "Int64" | "UInt16" | "UInt32" | "UInt64" => {
+            json!(0)
+        }
+        "Float" | "Double" | "LargeWorldCoordinatesReal" => float(0.0),
+        "Bool" => json!(false),
+        "Name" => json!("None"),
+        "Str" | "Text" => json!(""),
+        "Array" | "Set" => json!([]),
+        "Map" => json!({}),
+        _ => Value::Null,
+    })
+}
+
+/// An enum value's name, or the number if it has none (e.g. craft type 26, past `Max`).
+pub fn enum_name(schemas: &Schemas, property: &Property, value: i64) -> Value {
+    let name = property
+        .enum_name
+        .as_ref()
+        .and_then(|enum_name| schemas.enums.get(enum_name))
+        .and_then(|values| values.get(&value.to_string()));
+    name.map_or_else(|| json!(value), |name| json!(name))
+}
+
 /// The class of a package's main object, e.g. `DataTable`.
-fn main_class(package: &Package) -> Result<&str> {
+pub fn main_class(package: &Package) -> Result<&str> {
     package
         .export_classes
         .first()

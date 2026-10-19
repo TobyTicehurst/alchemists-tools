@@ -130,11 +130,18 @@ pub struct Package {
     pub exports: Vec<String>,
     /// Class name of each export.
     pub export_classes: Vec<String>,
+    /// Class path of each export, e.g. `/Script/Engine.Texture2D`.
+    pub export_class_paths: Vec<String>,
     /// Full object path of each import, e.g.
     /// `/Game/Arts/UI/Ingredients/T_UI_PortalSigil.T_UI_PortalSigil`.
     pub import_paths: Vec<String>,
     /// Full object path of each export, e.g. `/Game/DataTables/DT_Enemies.DT_Enemies`.
     pub export_paths: Vec<String>,
+    /// Each export's outer (a package index; 0 for a top-level object).
+    pub export_outers: Vec<i32>,
+    /// Where each export's data is, as (offset, size): the offset counts from the start of the
+    /// `.uasset`, so its data starts at `offset - uasset length` in the `.uexp`.
+    pub export_data: Vec<(i64, i64)>,
 }
 
 impl Package {
@@ -205,9 +212,26 @@ impl Package {
             imports,
             exports,
             export_classes: vec![],
+            export_class_paths: vec![],
+            export_outers: export_outers.clone(),
+            export_data: header
+                .exports
+                .iter()
+                .map(|export| (export.serial_offset, export.serial_size))
+                .collect(),
             import_paths,
             export_paths,
         };
+        package.export_class_paths = header
+            .exports
+            .iter()
+            .map(|export| {
+                package
+                    .object_path(export.class_index.index)
+                    .unwrap_or_default()
+                    .to_string()
+            })
+            .collect();
         package.export_classes = header
             .exports
             .iter()
