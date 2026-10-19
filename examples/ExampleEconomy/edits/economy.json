@@ -1,0 +1,22 @@
+{
+  "_comment": "Quests, land and purchase contracts",
+  "DT_Quests": {
+    "Main2": {
+      "_comment": "The second main quest asks for 25 Linen Rope (was 50). RequireProducts pairs Items with Nums; only Nums is given, so the item stays.",
+      "RequireProducts": {"Nums": [25]}
+    }
+  },
+  "DT_GridZones": {
+    "Land1": {
+      "_comment": "Land 1 costs 3,000 copper (was 6,000) and 100 copper a day (was 150)",
+      "UnlockCost": {"Z": 3000},
+      "DailyRent": 100
+    }
+  },
+  "DT_SupplyContract": {
+    "Bandage": {
+      "_comment": "Up to 32 Bandage contracts a day (was 16)",
+      "DailyLimit": 32
+    }
+  }
+}

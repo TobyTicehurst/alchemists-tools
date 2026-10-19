@@ -1,0 +1,7 @@
+{
+  "name": "ExampleResearch",
+  "title": "Example: Research and Upgrades",
+  "version": "0.1.0",
+  "description": "The worked example in docs/examples/research.md: a cheaper, faster research, a cheaper upgrade, and a stronger upgrade effect.",
+  "author": ""
+}

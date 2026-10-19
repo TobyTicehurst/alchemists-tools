@@ -3,8 +3,8 @@
 //! An edit file is `{table: {row: fields}}`; every key starting with `_` is a comment, apart from
 //! the row options `_copy` (a new row starting as a copy of another), `_slot` (a new recipe written
 //! over one of the game's unused recipe rows) and `_unlocked`. Objects merge field by field, lists
-//! are replaced whole, and every value is checked against its field's type. See MODDING.md in the
-//! mod project for the user's view.
+//! are replaced whole, and every value is checked against its field's type. See docs/MODDING.md for
+//! the user's view.
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 
@@ -708,8 +708,8 @@ pub fn build(game: &Game, sources: &[Source]) -> Result<Built> {
                     }
                     bail!(
                         "{at}: _unlocked needs a UE4SS mod (a .pak runs no code); unlock the \
-                        recipe \
-                         with a research instead (MODDING.md)"
+                         recipe with a research instead (docs/MODDING.md, \"Unlocking with \
+                         research\")"
                     );
                 }
                 if let Some(base) = original.get(row_name) {
@@ -1079,8 +1079,8 @@ fn checks(
         if usable.is_empty() {
             warnings.push(if other.is_empty() {
                 format!(
-                    "{RECIPES}.{name}: no research unlocks it (MODDING.md, \"Unlocking new \
-                    recipes with research\")"
+                    "{RECIPES}.{name}: no research unlocks it (docs/MODDING.md, \"Unlocking \
+                     with research\")"
                 )
             } else {
                 format!(

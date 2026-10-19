@@ -36,6 +36,7 @@ In `core/src/`:
 | `mods` | Mod folders: build, install (merging), uninstall, zip, scan |
 | `files` | Manifests, and the checks before a file in the game folder is deleted or replaced |
 | `probe` | UE4SS probe mods |
+| `stub` | Setting up the stub Unreal project |
 | `update` | The steps after a game update |
 | `facts` | Game knowledge that isn't in the tables (which machine runs which craft type) |
 

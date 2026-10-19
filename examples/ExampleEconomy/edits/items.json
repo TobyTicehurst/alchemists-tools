@@ -1,0 +1,23 @@
+{
+  "_comment": "Items (DT_Enemies: the game's code calls items 'enemies'). Prices are gold/silver/copper as X/Y/Z.",
+  "DT_Enemies": {
+    "Limestone": {
+      "_comment": "Each Limestone holds 300 units for the Stone Crusher (was 150). A negative MaximumStack is the units in one item; a positive one is the stack size.",
+      "MaximumStack": -300
+    },
+    "Coal": {
+      "_comment": "Coal gives 700 heat (was 540)",
+      "HeatValue": 700.0
+    },
+    "HealingPotion": {
+      "_comment": "Healing Potions sell for 120 copper in your shop (was 85)",
+      "CostValue": {"Z": 120}
+    }
+  },
+  "DT_PlantSeedConfig": {
+    "FlaxSeed": {
+      "_comment": "Flax needs 12 V of fertilizer to grow (was 24)",
+      "GrowthNutrientValue": 12.0
+    }
+  }
+}

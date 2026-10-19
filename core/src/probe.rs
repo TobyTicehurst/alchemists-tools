@@ -269,6 +269,24 @@ pub fn unmangle(path: &str) -> String {
     path
 }
 
+/// Write the tool's own AlchemistsLibrary mod into `<mods>/AlchemistsLibrary/`, unless the mods
+/// folder has one already. Returns whether it was written.
+pub fn write_library(mods: &Path) -> Result<bool> {
+    let library_folder = mods.join("AlchemistsLibrary");
+    if library_folder.join("mod.json").exists() {
+        return Ok(false);
+    }
+    let module = join(&library_folder, &["ue4ss-shared", "AlchemistsLibrary"]);
+    std::fs::create_dir_all(&module)?;
+    std::fs::write(library_folder.join("mod.json"), LIBRARY_MOD)?;
+    std::fs::write(module.join("AlchemistsLibrary.lua"), LIBRARY)?;
+    println!(
+        "wrote {} (the tool's own Lua library)",
+        display_path(&library_folder)
+    );
+    Ok(true)
+}
+
 /// Write the probe mod `<mods>/<name>/` (and the AlchemistsLibrary mod if it isn't there).
 #[allow(clippy::too_many_arguments)]
 pub fn write_probe(
@@ -381,17 +399,7 @@ pub fn write_probe(
     // The library, at least the version the probe was written for (its functions may be new)
     let library: Value = serde_json::from_str(LIBRARY_MOD)?;
     let version = library["version"].as_str().unwrap_or("0.1.0").to_string();
-    let library_folder = mods.join("AlchemistsLibrary");
-    if !library_folder.join("mod.json").exists() {
-        let module = join(&library_folder, &["ue4ss-shared", "AlchemistsLibrary"]);
-        std::fs::create_dir_all(&module)?;
-        std::fs::write(library_folder.join("mod.json"), LIBRARY_MOD)?;
-        std::fs::write(module.join("AlchemistsLibrary.lua"), LIBRARY)?;
-        println!(
-            "wrote {} (the library probes need)",
-            display_path(&library_folder)
-        );
-    }
+    write_library(mods)?;
     let description = format!(
         "Logs calls to {}{}. Changes nothing.",
         if functions_wanted.is_empty() {

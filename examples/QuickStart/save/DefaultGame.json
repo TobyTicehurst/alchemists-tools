@@ -1,0 +1,7 @@
+{
+  "_comment": "New games start from the template save PreviewSaveGames/DefaultGame.sav, which already holds the first quest (Main1). Each edit names a property; \"after\" counts from the first property of that name, and \"expect\" stops the build if a game update changed the value.",
+  "edits": [
+    {"_comment": "Main1: 20 Large Wooden Gears -> 10", "property": "Count", "after": "RequireProducts", "expect": 20, "value": 10},
+    {"_comment": "Main1's reward: 200 Flax -> 500", "property": "Count", "after": "Products", "expect": 200, "value": 500}
+  ]
+}

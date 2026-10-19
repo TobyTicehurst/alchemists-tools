@@ -1,0 +1,7 @@
+{
+  "name": "ExampleEconomy",
+  "title": "Example: Items, Quests and the Economy",
+  "version": "0.1.0",
+  "description": "The worked example in docs/examples/items-and-economy.md: item stack sizes, fuel and prices, a quest, land, a purchase contract and a plant.",
+  "author": ""
+}

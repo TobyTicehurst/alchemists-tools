@@ -84,7 +84,7 @@ end
 
 -- A readable form of any value, for logs. layout describes what a struct or array holds (UE4SS can't list a
 -- struct's fields itself): {fields = {{name = "IngredientName"}, {name = "Count"}}}, {array = <layout>}, or nil.
--- tools/make_probe.py writes layouts from the .usmap.
+-- alchemists-tools probe writes layouts from the .usmap.
 function Library.describe(value, layout, depth)
     depth = depth or 0
     if type(value) == "userdata" and layout and depth < 4 then
