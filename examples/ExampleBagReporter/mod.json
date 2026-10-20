@@ -2,7 +2,7 @@
   "name": "ExampleBagReporter",
   "title": "Example: Bag Reporter",
   "version": "0.1.0",
-  "description": "The worked example in docs/examples/lua.md: a UE4SS Lua mod that logs each bag that deconstructing makes, and on Ctrl + Numpad 7 lists what the newest bag holds. Changes nothing.",
+  "description": "The worked example in docs/examples/lua.md: a UE4SS Lua mod that logs each bag that deconstructing makes, and on Ctrl + Numpad 1 lists what the newest bag holds. Changes nothing.",
   "author": "",
-  "dependencies": ["AlchemistsLibrary >= 0.2.3"]
+  "dependencies": ["AlchemistsLibrary >= 0.2.4"]
 }

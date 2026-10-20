@@ -140,5 +140,8 @@ Requirements (`RequireProducts`) count whole items.
 
 Fuel: `HeatValue` is heat per unit, and a building's `HeatCost` is heat per second. So fuel items per
 second = `HeatCost ÷ (HeatValue × units per item)`, adjusted by the `FuelEfficiency` and
-`FactoryConsumeSpeed` attributes. Steam has a heat value of 20, so a building heated by steam uses
+`FactoryConsumeSpeed` attributes. Checked in game: a Crucible (4 heat a second, 4 s per Charcoal) made
+12.5 Charcoal from 10 Planks (200 heat). With production speed at +50 % and `FactoryConsumeSpeed` at
++25 %, it ran 1.5 times as fast but still made 12.5, so heat use followed the speed. A changed
+`HeatCost` shows in the tooltip, but a Kiln still used its old 15 a second. Steam has a heat value of 20, so a building heated by steam uses
 `HeatCost ÷ 20` steam per second.

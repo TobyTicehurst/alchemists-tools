@@ -130,6 +130,10 @@ enum Command {
         /// Calls per function logged in full
         #[arg(long, default_value_t = 50)]
         limit: usize,
+        /// Calls logged in full whose arguments look the same (numbers aside), per function; more
+        /// are only counted (Ctrl + Numpad 3)
+        #[arg(long, default_value_t = 3)]
+        repeats: usize,
         /// Overwrite an earlier probe of the same name
         #[arg(long)]
         force: bool,
@@ -162,13 +166,18 @@ enum ModAction {
         /// Also build and install the mods it requires, from the mods folder
         #[arg(long)]
         with_dependencies: bool,
+        /// Replace the tool's merged files (zzz_ModTables_P, zzz_ModSave_P) even if they've
+        /// changed since it wrote them
+        #[arg(long)]
+        force: bool,
     },
     /// Remove a mod from the game: only the files its manifest lists, and only while they're as it
     /// installed them
     Uninstall {
         name: String,
         /// Also delete its files that have changed since it installed them; uninstall even if
-        /// installed mods require it; delete the files of a mod this tool didn't install
+        /// installed mods require it; delete the files of a mod this tool didn't install; replace
+        /// the tool's merged files even if they've changed since it wrote them
         #[arg(long)]
         force: bool,
     },
@@ -209,7 +218,8 @@ fn mod_command(
         ModAction::Install {
             name,
             with_dependencies,
-        } => workspace.install(&workspace.load(&name)?, with_dependencies, &[]),
+            force,
+        } => workspace.install(&workspace.load(&name)?, with_dependencies, force, &[]),
         ModAction::Dist { name } => {
             let found = workspace.load(&name)?;
             let (out, info) = workspace.build_mod(&found)?;
@@ -309,6 +319,7 @@ fn main() -> Result<()> {
             functions,
             new_objects,
             limit,
+            repeats,
             force,
             mods,
         } => {
@@ -322,6 +333,7 @@ fn main() -> Result<()> {
                 &functions,
                 &new_objects,
                 limit,
+                repeats,
                 force,
             )
             .map(|_| ())

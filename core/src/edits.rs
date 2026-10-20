@@ -959,8 +959,23 @@ fn checks(
 
     let skills = editor.rows("DT_SkillPoints")?.clone();
     let buildings = editor.rows("DT_Buildings")?.clone();
+    let x = |row: &Value| get(get(row, "SlotPosition"), "X").as_i64().unwrap_or(0);
     let y = |row: &Value| get(get(row, "SlotPosition"), "Y").as_i64().unwrap_or(0);
-    // Research: the tree draws links downwards, and every game research is below its predecessors
+    // Research: the tree draws links downwards, and every game research is below its predecessors.
+    // A link runs down the predecessor's column, then sideways in the row just above the node, so
+    // a node in that column in between looks like the one the link comes from
+    let in_the_way = |predecessor: &Value, row: &Value| -> Vec<&String> {
+        skills
+            .iter()
+            .filter(|(_, other)| {
+                !flag(other, "Deprecated")
+                    && x(other) == x(predecessor)
+                    && y(other) > y(predecessor)
+                    && y(other) < y(row)
+            })
+            .map(|(other_name, _)| other_name)
+            .collect()
+    };
     for name in changed
         .get("DT_SkillPoints")
         .map(|rows| rows.keys().collect::<Vec<_>>())
@@ -984,7 +999,20 @@ fn checks(
                     "DT_SkillPoints.{name}: unknown predecessor \
                     {before}"
                 )),
-                _ => {}
+                Some(predecessor) => {
+                    let between = in_the_way(predecessor, row);
+                    if !between.is_empty() {
+                        let between: Vec<&str> =
+                            between.iter().map(|other| other.as_str()).collect();
+                        warnings.push(format!(
+                            "DT_SkillPoints.{name}: its link from {before} runs down through {}, \
+                             so it looks like it comes from there; put it in the row just below \
+                             {before} (SlotPosition.Y {})",
+                            between.join(", "),
+                            y(predecessor) + 1
+                        ));
+                    }
+                }
             }
         }
     }

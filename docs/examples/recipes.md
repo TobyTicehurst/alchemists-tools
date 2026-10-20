@@ -101,8 +101,8 @@ A new recipe can't be used until a research unlocks it. So `edits/new-recipe.jso
   "DT_SkillPoints": {
     "PlanksToLargeGear": {
       "_copy": "WoodGear",
-      "SlotPosition": {"X": -2, "Y": 5},
-      "Predecessors": ["Processor"],
+      "SlotPosition": {"X": -1, "Y": 5},
+      "Predecessors": ["WoodGear"],
       "UnlockItem": {"ConfigName": "PlanksToLargeGear", "ConfigType": "CraftingRecipes"}
     }
   }
@@ -116,9 +116,11 @@ The recipe:
 
 The research:
 - **`_copy`** starts it as a copy of the Small Wooden Gear's research, with the same tier, cost and time.
-- **`SlotPosition`** places it in the tree: X is left and right, Y is down. It must be at least one row
-  below its predecessors, because links are drawn downwards. The Processor's research is at (0, 3). The
-  build stops if two researches share a place, so check `DT_SkillPoints.json` for free ones.
+- **`SlotPosition`** places it in the tree: X is left and right, Y is down. Put it in the row just below
+  its predecessor: a link runs down the predecessor's column, then sideways, so it seems to come from any
+  node in its way (the build warns about that). The Small Wooden Gear research is at (-1, 4); the place
+  below it held a research the game no longer uses (`Deprecated`), so it's free. The build stops if two
+  researches share a place, so check `DT_SkillPoints.json` for free ones.
 - **`UnlockItem`** names the recipe, as a `CraftingRecipes` unlock.
 
 The details are in `docs/examples/research.md`.
@@ -150,7 +152,7 @@ alchemists-tools mod install ExampleRecipes --mods examples
 ```
 
 In a new or Sandbox save:
-1. Research the new node, two columns left of the Processor's and two rows below it.
+1. Research the new node, directly below the Small Wooden Gear research.
 2. Choose the new recipe on a Processor, and check that 2 Planks make 1 Large Wooden Gear.
 3. Check that a Processor making Small Wooden Gears makes 4 per Large Wooden Gear.
 

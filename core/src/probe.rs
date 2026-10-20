@@ -104,8 +104,17 @@ fn split_top_level(text: &str) -> Vec<String> {
         .collect()
 }
 
-/// The UFUNCTIONs a header declares: (name, [(type, parameter name)]).
-fn functions(text: &str) -> Vec<(String, Vec<(String, String)>)> {
+/// A UFUNCTION as a header declares it.
+struct Declaration {
+    name: String,
+    /// The C++ return type ("void" for none)
+    returns: String,
+    /// (type, parameter name)
+    parameters: Vec<(String, String)>,
+}
+
+/// The UFUNCTIONs a header declares.
+fn functions(text: &str) -> Vec<Declaration> {
     let mut out = vec![];
     let mut rest = text;
     while let Some(at) = rest.find("UFUNCTION(") {
@@ -136,12 +145,17 @@ fn functions(text: &str) -> Vec<(String, Vec<(String, String)>)> {
         let (Some(open), Some(close)) = (declaration.find('('), declaration.rfind(')')) else {
             continue;
         };
-        let name = declaration[..open]
-            .trim()
+        let before = declaration[..open].trim();
+        let name = before
             .rsplit([' ', '*', '&'])
             .next()
             .unwrap_or_default()
             .to_string();
+        let returns = before[..before.len() - name.len()]
+            .split_whitespace()
+            .filter(|word| !matches!(*word, "static" | "virtual" | "inline" | "FORCEINLINE"))
+            .collect::<Vec<_>>()
+            .join(" ");
         let parameters = split_top_level(&declaration[open + 1..close])
             .into_iter()
             .filter_map(|parameter| {
@@ -159,7 +173,11 @@ fn functions(text: &str) -> Vec<(String, Vec<(String, String)>)> {
             })
             .collect();
         if !name.is_empty() {
-            out.push((name, parameters));
+            out.push(Declaration {
+                name,
+                returns,
+                parameters,
+            });
         }
     }
     out
@@ -273,8 +291,18 @@ pub fn unmangle(path: &str) -> String {
 /// folder has one already. Returns whether it was written.
 pub fn write_library(mods: &Path) -> Result<bool> {
     let library_folder = mods.join("AlchemistsLibrary");
-    if library_folder.join("mod.json").exists() {
-        return Ok(false);
+    let version_of = |text: &str| -> Option<crate::mods::Version> {
+        let manifest: Value = serde_json::from_str(text).ok()?;
+        crate::mods::parse_version(manifest["version"].as_str()?, "AlchemistsLibrary").ok()
+    };
+    if let Ok(existing) = std::fs::read_to_string(library_folder.join("mod.json")) {
+        // a copy older than the tool's own is replaced; any other copy is someone's, and kept
+        let older = version_of(&existing)
+            .zip(version_of(LIBRARY_MOD))
+            .is_some_and(|(existing, own)| existing < own);
+        if !older {
+            return Ok(false);
+        }
     }
     let module = join(&library_folder, &["ue4ss-shared", "AlchemistsLibrary"]);
     std::fs::create_dir_all(&module)?;
@@ -297,6 +325,7 @@ pub fn write_probe(
     functions_wanted: &[String],
     new_objects: &[String],
     limit: usize,
+    repeats: usize,
     force: bool,
 ) -> Result<PathBuf> {
     if !(name.chars().next().is_some_and(|c| c.is_ascii_alphabetic())
@@ -329,15 +358,15 @@ pub fn write_probe(
         }
         let (module, text) = find_class(&dump, owner)?;
         let declared = functions(&text);
-        let mut found: Vec<&(String, Vec<(String, String)>)> = declared
+        let mut found: Vec<&Declaration> = declared
             .iter()
-            .filter(|(function, _)| matches(pattern, function))
+            .filter(|function| matches(pattern, &function.name))
             .collect();
-        found.sort_by(|a, b| a.0.cmp(&b.0));
+        found.sort_by(|a, b| a.name.cmp(&b.name));
         if found.is_empty() {
             let mut names: Vec<&str> = declared
                 .iter()
-                .map(|(function, _)| function.as_str())
+                .map(|function| function.name.as_str())
                 .collect();
             names.sort();
             bail!(
@@ -345,7 +374,8 @@ pub fn write_probe(
                 names.join(", ")
             );
         }
-        for (function, parameters) in found {
+        for declaration in found {
+            let (function, parameters) = (&declaration.name, &declaration.parameters);
             let params: Vec<Value> = parameters
                 .iter()
                 .map(|(cpp_type, parameter)| {
@@ -357,10 +387,21 @@ pub fn write_probe(
                 })
                 .collect();
             let shown: Vec<String> = parameters.iter().map(|(t, p)| format!("{t} {p}")).collect();
-            println!("{module}.{owner}:{function}({})", shown.join(", "));
-            hooks.push(
-                json!({"path": format!("/Script/{module}.{owner}:{function}"), "params": params}),
+            println!(
+                "{module}.{owner}:{function}({}) -> {}",
+                shown.join(", "),
+                declaration.returns
             );
+            let mut hook =
+                json!({"path": format!("/Script/{module}.{owner}:{function}"), "params": params});
+            if declaration.returns != "void" && !declaration.returns.is_empty() {
+                let mut returns = json!({"type": declaration.returns});
+                if let Some(found) = layout(&declaration.returns, schemas, 0) {
+                    returns["layout"] = found;
+                }
+                hook["returns"] = returns;
+            }
+            hooks.push(hook);
         }
     }
     let new_objects: Vec<String> = new_objects.iter().map(|class| unmangle(class)).collect();
@@ -391,6 +432,7 @@ pub fn write_probe(
         .replace("@COMMAND@", &format!("{name} {}", command.join(" ")))
         .replace("@NAME@", name)
         .replace("@LIMIT@", &limit.to_string())
+        .replace("@REPEATS@", &repeats.to_string())
         .replace("@HOOKS@", &lua(&Value::Array(hooks)))
         .replace("@NEW_OBJECTS@", &lua(&json!(new_objects)));
     std::fs::create_dir_all(script.parent().unwrap())?;
@@ -445,9 +487,11 @@ mod tests {
                       UFUNCTION(BlueprintCallable)\n    void Server_AddItem(const FVector& occurs, \
                           FName ItemName);\n};";
         let found = functions(header);
-        assert_eq!(found[0].0, "CheckCanCost");
+        assert_eq!(found[0].name, "CheckCanCost");
+        assert_eq!(found[0].returns, "bool");
+        assert_eq!(found[1].returns, "void");
         assert_eq!(
-            found[0].1,
+            found[0].parameters,
             [
                 (
                     "const TArray<FBeltTDIngredientCount>&".to_string(),
@@ -456,7 +500,15 @@ mod tests {
                 ("int32".to_string(), "Count".to_string())
             ]
         );
-        assert_eq!(found[1].1[1], ("FName".to_string(), "ItemName".to_string()));
+        assert_eq!(
+            found[1].parameters[1],
+            ("FName".to_string(), "ItemName".to_string())
+        );
+        let static_function = functions(
+            "UFUNCTION(BlueprintCallable)\n    static FPackBlueprintDesc ReadBlueprintDesc(const \
+             FString& Dir);",
+        );
+        assert_eq!(static_function[0].returns, "FPackBlueprintDesc");
     }
 
     #[test]

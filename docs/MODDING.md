@@ -138,16 +138,17 @@ starting from a copy of an existing research:
   "DT_SkillPoints": {
     "PlanksToLargeGear": {
       "_copy": "WoodGear",
-      "SlotPosition": {"X": -2, "Y": 5},
-      "Predecessors": ["Processor"],
+      "SlotPosition": {"X": -1, "Y": 5},
+      "Predecessors": ["WoodGear"],
       "UnlockItem": {"ConfigName": "PlanksToLargeGear", "ConfigType": "CraftingRecipes"}
     }
   }
 }
 ```
 
-- **`SlotPosition`** is the node's place in the tree: X left and right, Y down. Put it at least one row
-  below its predecessors, because links are drawn downwards. The build stops when two researches that
+- **`SlotPosition`** is the node's place in the tree: X left and right, Y down. Put it in the row just
+  below its predecessors: a link runs down the predecessor's column, then sideways, so a node in that
+  column in between looks like where it comes from (the build warns about it). The build stops when two researches that
   aren't deprecated share a place.
 - **`Predecessors`** are the researches needed first.
 - **`UnlockItem`** is what it unlocks: a recipe (`CraftingRecipes`) or a building (`ConstructOptions`).
@@ -167,7 +168,7 @@ The build stops when a changed row shares an ID with another row.
 
 **A save with a placed building whose row is missing crashes on load.** So players must deconstruct a
 mod's buildings before uninstalling it, and a building row must never be renamed or removed once
-released. The install, the uninstall and the zip's README all warn about each new building.
+released. The install, the uninstall and the README `dist` writes all warn about each new building.
 
 ## Mod folders
 
@@ -177,7 +178,7 @@ mods/MyMod/
   edits/*.json             table edits
   edits/if-Other/*.json    table edits applied only when the mod Other is installed too
   save/DefaultGame.json    edits to the save new games start from
-  ue4ss/                   a UE4SS Lua mod (Scripts/main.lua)  -> ue4ss/Mods/MyMod/
+  ue4ss/                   a UE4SS mod: Lua (Scripts/main.lua) or C++ (dlls/main.dll)  -> ue4ss/Mods/MyMod/
   ue4ss-shared/MyModX/     Lua modules for other mods          -> ue4ss/Mods/shared/MyModX/
 ```
 
@@ -191,7 +192,7 @@ mods/MyMod/
   "description": "A second Assembler.",
   "author": "",
   "homepage": "",
-  "dependencies": ["AlchemistsLibrary >= 0.2.3", "? BiggerChests", "! OtherStorageMod"],
+  "dependencies": ["AlchemistsLibrary >= 0.2.4", "? BiggerChests", "! OtherStorageMod"],
   "content": ["/Game/Mods/MyMachine"],
   "new-craft-types": ["Sorting"],
   "craft-types": {"BP_MyMachine": "MyMachine:Sorting"}
@@ -202,7 +203,7 @@ Only `name` is needed. Like Factorio's `info.json`:
 - **`name`**: letters and digits, starting with a letter. It names the containers and the UE4SS folder.
 - **`title`**: the name players see (default: `name`).
 - **`version`**: `major.minor.patch` (default `0.1.0`).
-- **`description`, `author`, `homepage`, `contact`**: shown in the zip's README.
+- **`description`, `author`, `homepage`, `contact`**: shown in the README `dist` writes.
 - **`dependencies`**: other mods, written `"[prefix] Name [operator version]"`. The operators are `<`,
   `<=`, `=`, `>=` and `>`.
 
@@ -256,7 +257,7 @@ It warns about likely mistakes, judged from the game's own data:
 ## Installing
 
 ```
-alchemists-tools mod install MyMod [--with-dependencies]   # build, then install (and the mods it requires)
+alchemists-tools mod install MyMod [--with-dependencies] [--force]   # build, then install (and the mods it requires)
 alchemists-tools mod uninstall MyMod [--force]
 alchemists-tools mod list                                    # mods, what's installed, and the load order
 alchemists-tools mod scan                                    # every mod in the game folder, and its files
@@ -291,7 +292,7 @@ Nothing is deleted or replaced unless all of this holds:
 3. its size and hash are still those installed.
 
 A file that has changed is kept, and `uninstall` lists it; `--force` deletes it too. A merged file that
-has changed stops the install or uninstall before anything is touched. Folders are never deleted with
+has changed stops the install or uninstall before anything is touched; `--force` replaces it anyway. Folders are never deleted with
 their contents: only files one by one, then the folders left empty below `ue4ss/Mods/`. So your own files
 in a mod's folder keep it.
 
@@ -384,7 +385,7 @@ under `/Game/Arts/`) let a Blueprint use the game's models. They're never packag
 ## Sharing a mod
 
 ```
-alchemists-tools mod dist MyMod      # -> build/MyMod_<version>.zip, with a README
+alchemists-tools mod dist MyMod      # -> build/MyMod_<version>.zip, and build/MyMod_<version>_README.txt
 ```
 
 The zip is for players without this tool. It holds:
@@ -392,7 +393,9 @@ The zip is for players without this tool. It holds:
 - its manifest, so this tool recognises it once extracted;
 - its own data container, `zzz_<name>_P`, with its edits plus those of the mods it requires.
 
-Players can't merge tables. So the README:
+The README is written beside the zip, not into it: mod sites have their own place for a mod's
+description and install instructions, so paste it there. It has install and uninstall instructions, and
+since players can't merge tables, it also:
 - lists the tables the mod replaces;
 - tells players to delete the required mods' table files;
 - lists dependencies;

@@ -4,8 +4,8 @@ The mod `examples/ExampleEconomy/` (in this repo) changes items, a plant, a ques
 
 | Change | Status |
 |---|---|
-| Limestone holds 300 units (was 150) | Confirmed in game: 300 Stone per Limestone |
-| Flax needs 12 V of fertilizer (was 24) | Confirmed in game |
+| Limestone holds 300 units (was 150) | Confirmed in game: 300 Stone per Limestone. The tooltip still said 150; the recipe change for it is untested |
+| Flax needs 12 V of fertilizer (was 24) | Confirmed in game (a Nursery with Basic Fertilizer, at most 12 V/s, made 1 Flax a second). The Flax tooltip still says 24 V |
 | The second main quest asks for 25 Linen Rope (was 50) | Confirmed in game |
 | Coal gives 700 heat (was 540) | Builds; not tried in game |
 | Healing Potions sell for 120 copper (was 85) | Builds; not tried in game |
@@ -35,6 +35,9 @@ prototype. From `data/DataTables/DT_Enemies.json`:
     "Coal": {"HeatValue": 700.0},
     "HealingPotion": {"CostValue": {"Z": 120}}
   },
+  "DT_EnemyCrafting": {
+    "Stone": {"FractionNum": 300}
+  },
   "DT_PlantSeedConfig": {
     "FlaxSeed": {"GrowthNutrientValue": 12.0}
   }
@@ -42,14 +45,17 @@ prototype. From `data/DataTables/DT_Enemies.json`:
 ```
 
 - **`MaximumStack`**: positive, it's the stack size. Negative, the item is a *unit item* holding that
-  many units: the Stone Crusher makes one Stone per unit of Limestone.
+  many units: the Stone Crusher makes one Stone per unit of Limestone. With only this changed, a
+  Limestone made 300 Stone, but the tooltip still said 150. The tooltip probably shows the Stone
+  Crusher recipe's `FractionNum` (the `Stone` row of `DT_EnemyCrafting`), so the example sets that to
+  300 too. Whether that fixes the tooltip is still to be checked.
 - **`HeatValue`**: heat per unit when burnt as fuel.
 - **`CostValue`**: the base price in your shop. **`StockCost`** is what it costs to buy from the merchant
   or the portal. Both are prices: X gold, Y silver, Z copper.
 - **`GrowthNutrientValue`** (`DT_PlantSeedConfig`, by seed): the fertilizer a plant needs, the "V" in
-  game. With the edit made while the game ran, the Flax tooltip still said 24 V while growth took 12. A
-  `.pak` mod loads before the game reads the table, so its tooltip may well be right, but that hasn't
-  been checked.
+  game. Growth takes the new value, but the Flax item's tooltip ("Growth Required Nutrient: 24 V")
+  doesn't, even with the mod installed before the game starts. The seed's tooltip doesn't show it.
+  Where the tooltip's number comes from is unknown.
 
 The other item fields (quest and shop tiers, how much customers buy, models, icons) are in
 `docs/FIELDS.md`.

@@ -19,7 +19,7 @@
 --
 -- Marked "untested" below: calls not yet tried in this game.
 
-local Library = {version = "0.2.3"}
+local Library = {version = "0.2.5"}
 
 -- Logging -------------------------------------------------------------------------------------------------
 
@@ -63,8 +63,16 @@ end
 
 -- The elements of a TArray, as a Lua list.
 function Library.list(array)
-    -- UE4SS gives an array a function returns (e.g. K2_GetComponentsByClass) as a Lua table already
-    if type(array) == "table" then return array end
+    -- UE4SS gives an array a function returns (e.g. K2_GetComponentsByClass) as a Lua table already,
+    -- of RemoteUnrealParam wrappers, which :get() unwraps (seen in game: 0.2.4's log, 2026-10-19)
+    if type(array) == "table" then
+        local items = {}
+        for i, element in ipairs(array) do
+            local ok, value = pcall(function() return element:get() end)
+            items[i] = (ok and value ~= nil) and value or element
+        end
+        return items
+    end
     local items = {}
     array:ForEach(function(_, element) items[#items + 1] = element:get() end)
     return items
@@ -202,7 +210,7 @@ end
 
 -- The items an actor holds, as {{name = "WoodBoard", count = 12}, ...}: the slots of its
 -- BuildingFacilityComponents (FacilityContainer: chests, bags, machines) and BeltTDInventoryComponents
--- (ContainerInventory: the player). Empty slots are left out. Untested.
+-- (ContainerInventory: the player). Empty slots are left out.
 --
 -- Call it once the world has loaded (e.g. from a key). Version 0.2.0 found the components by scanning
 -- every component in the world, during the world's load, and that crashed the game inside UE4SS.
@@ -212,11 +220,13 @@ end
 function Library.contents(actor, report)
     report = report or function() end
     local items = {}
+    local read_already = {}
+    -- Whether the component's slots could be read
     local function read(component, property)
         local ok, slots = pcall(function() return Library.list(component[property].Slots) end)
         if not ok then
             report("   can't read " .. property .. ": " .. tostring(slots))
-            return
+            return false
         end
         report(string.format("   %s: %d slot(s)%s", property, #slots,
             #slots > 0 and (", the first " .. Library.describe(slots[1],
@@ -225,25 +235,29 @@ function Library.contents(actor, report)
             local name = slot.ItemName:ToString()
             if name ~= "None" then items[#items + 1] = {name = name, count = slot.ItemStack} end
         end
+        return true
     end
-    local found = 0
+    local function read_once(component, property)
+        local ok, full_name = pcall(function() return component:GetFullName() end)
+        local key = ok and full_name or tostring(component)
+        if read_already[key] then return end
+        if read(component, property) then read_already[key] = true end
+    end
+    -- A Blueprint's components are also its variables, named as in the Blueprint. Reading a bag through
+    -- its variable is the way confirmed in game, so it comes first
+    for _, name in ipairs({"IngredientContainer"}) do
+        local ok, component = pcall(function() return actor[name] end)
+        if ok and component and component:IsValid() then
+            report("   found " .. name .. " as a variable: " .. Library.describe(component))
+            read_once(component, "FacilityContainer")
+        else
+            report("   no variable " .. name)
+        end
+    end
     for _, spec in ipairs({{"/Script/BeltTD.BuildingFacilityComponent", "FacilityContainer"},
                            {"/Script/BeltTD.BeltTDInventoryComponent", "ContainerInventory"}}) do
         for _, component in ipairs(Library.components(actor, spec[1], report)) do
-            found = found + 1
-            read(component, spec[2])
-        end
-    end
-    if found == 0 then
-        -- A Blueprint's components are also its variables, named as in the Blueprint
-        for _, name in ipairs({"IngredientContainer"}) do
-            local ok, component = pcall(function() return actor[name] end)
-            if ok and component and component:IsValid() then
-                report("   found " .. name .. " as a variable: " .. Library.describe(component))
-                read(component, "FacilityContainer")
-            else
-                report("   no variable " .. name)
-            end
+            read_once(component, spec[2])
         end
     end
     return items

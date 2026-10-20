@@ -8,7 +8,7 @@ Table edits change the game's data. To change what the game *does* while it runs
 - add key binds.
 
 The worked example is `examples/ExampleBagReporter/` (in this repo). Deconstructing buildings puts what they held into a bag;
-the mod logs each new bag, and on Ctrl + Numpad 7 lists what the newest one holds. It only reads.
+the mod logs each new bag, and on Ctrl + Numpad 1 lists what the newest one holds. It only reads.
 
 | Part | Status |
 |---|---|
@@ -28,7 +28,7 @@ The tools need UE4SS anyway, for the game's `.usmap` (Ctrl + Numpad 6 in a new s
 
 ```
 examples/ExampleBagReporter/
-  mod.json                     "dependencies": ["AlchemistsLibrary >= 0.2.3"]
+  mod.json                     "dependencies": ["AlchemistsLibrary >= 0.2.4"]
   ue4ss/Scripts/main.lua       -> ue4ss/Mods/ExampleBagReporter/Scripts/main.lua
 ```
 
@@ -60,7 +60,7 @@ log.log("hello")                -- UE4SS.log: [MyMod] hello
 | `Library.contents(actor, report)` | What a chest, bag or machine holds: `{{name = "WoodBoard", count = 12}, ...}` | Confirmed on bags |
 | `Library.components(actor, class_path)` | An actor's components of a class | Confirmed |
 | `Library.placed(class_name)` | Every object of a class in the world | Untested |
-| `Library.data_table(name)`, `Library.find_row(table, row)` | A data table, or one of its rows, as the game has it in memory | Untested |
+| `Library.data_table(name)`, `Library.find_row(table, row)` | A data table, or one of its rows, as the game has it in memory | Confirmed (`DT_Buildings` rows and their `CostList`) |
 | `Library.sorted_keys(t)`, `Library.by_position(actors)` | A fixed order, for multiplayer (below) | Untested |
 | `Library.has_authority(actor)` | Whether this machine is the host for an actor | Untested |
 
@@ -88,28 +88,35 @@ already in a save, while it loads. So the function only notes the bag: reading t
 it loads can crash the game (Rules, below).
 
 ```lua
-Library.keybind(Key.NUM_SEVEN, {ModifierKey.CONTROL}, log, function()
+Library.keybind(Key.NUM_ONE, {ModifierKey.CONTROL}, log, function()
     if not newest or not newest:IsValid() then
         log.log("no bag yet: deconstruct something first")
         return
     end
+    local steps = {}
     local held = {}
-    for _, item in ipairs(Library.contents(newest)) do
+    for _, item in ipairs(Library.contents(newest, function(line) steps[#steps + 1] = line end)) do
         held[#held + 1] = item.count .. " " .. item.name
     end
     log.log("the newest bag holds: " .. (#held > 0 and table.concat(held, ", ") or "nothing"))
+    -- For "nothing", how the bag was read tells an empty bag from one the library couldn't read
+    if #held == 0 then
+        for _, line in ipairs(steps) do log.log(line) end
+    end
 end)
 ```
 
 The bag is read only when the key is pressed, by which time the world has loaded. `IsValid` checks that
 the bag still exists. Always check an object you kept from earlier: the game may have removed it since.
+`Library.contents` reports each step of its lookup to the function it's given; the mod logs those steps
+only when it finds nothing, to tell an empty bag from one that couldn't be read.
 
 Install it, and its library:
 ```
 alchemists-tools mod install ExampleBagReporter --with-dependencies --mods examples
 ```
 
-In game, deconstruct a chest that holds something, then press Ctrl + Numpad 7. `UE4SS.log` shows:
+In game, deconstruct a chest that holds something, then press Ctrl + Numpad 1. `UE4SS.log` shows:
 ```
 [ExampleBagReporter] a bag appeared: ...BP_PhantomTemporaryBag_C...
 [ExampleBagReporter] the newest bag holds: 600 WoodBoard, 200 Brick, ...
@@ -127,8 +134,14 @@ alchemists-tools mod install VaultProbe --with-dependencies
 
 - Each argument is `<Class>:<Function>`, with `*` allowed in the function's name.
 - `--new-object` also logs each new object of a class.
-- The probe logs each call's arguments, named and laid out from the `.usmap`.
-- Ctrl + Numpad 9 logs how often each function was called, and Ctrl + Numpad 8 what the new objects
+- The probe logs each call's arguments, named and laid out from the `.usmap`, and after the call, what
+  it wrote to its out parameters. It logs return values only for functions without parameters: for the
+  others, UE4SS hands the post-hook something else in the return value's place (a test found the
+  function's own argument there).
+- `--limit` caps the calls logged in full per function (50). `--repeats` (3) caps those whose arguments
+  look the same once numbers are set aside, so a function called every tick logs a few calls and then
+  only the ones that differ, or that return something new. Every call is still counted.
+- Ctrl + Numpad 3 logs how often each function was called, and Ctrl + Numpad 2 what the new objects
   hold.
 
 That probe, VaultProbe, is the one that found the bags.
@@ -158,6 +171,11 @@ Use Lua for what tables can't do.
 - **Don't touch the world's objects in bulk while a world loads.** Scanning every component during a load
   crashed the game inside UE4SS. React to new objects lightly, and do the real work later: on a key press,
   or with `ExecuteWithDelay`.
+- **Calling a game function can crash where hooking it can't.** The C++ behind a function may expect a
+  loaded save. `BeltTDPlayerController:GetCurrentStateName()` called from a timer at the main menu (the
+  controller has no state yet) crashed the game. To know the state, post-hook it instead: the user
+  interface calls it on every change, and as it takes no parameters, the post-hook gets its real return
+  value.
 - **Use game objects on the game thread.** Key binds and timers may run elsewhere. `Library.keybind` and
   `Library.on_game_thread` take care of it, and `LoopInGameThreadWithDelay(ms, work)` repeats work there.
 - **Functions the game's C++ calls directly can't be hooked.** Building and deconstructing never called
@@ -174,5 +192,6 @@ Use Lua for what tables can't do.
 
   Logging, and changes only the local player sees, are exempt. A change made on one machine alone (from
   a key, say) makes the players' games differ from then on.
-- **Keys:** UE4SS uses Ctrl + Numpad 5, 6 and 9 for its dumps. Probes use Ctrl + Numpad 8 and 9, and the
-  example uses 7.
+- **Keys:** UE4SS's own keys (its `Keybinds` mod) are Ctrl + Numpad 5 to 9, Ctrl + J and Ctrl + H, for
+  its dumps; Ctrl + Numpad 7, for one, dumps every loaded actor to a file. Mods here use Ctrl + Numpad 1
+  to 4: probes use 2 and 3, and the example uses 1.

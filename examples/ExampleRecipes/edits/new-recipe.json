@@ -11,10 +11,10 @@
   },
   "DT_SkillPoints": {
     "PlanksToLargeGear": {
-      "_comment": "A copy of the Small Wooden Gear research (same tier, cost and time), placed below the Processor's and two columns left of it, unlocking the new recipe",
+      "_comment": "A copy of the Small Wooden Gear research (same tier, cost and time), placed directly below it (where a research the game no longer uses was), unlocking the new recipe",
       "_copy": "WoodGear",
-      "SlotPosition": {"X": -2, "Y": 5},
-      "Predecessors": ["Processor"],
+      "SlotPosition": {"X": -1, "Y": 5},
+      "Predecessors": ["WoodGear"],
       "UnlockItem": {"ConfigName": "PlanksToLargeGear", "ConfigType": "CraftingRecipes"}
     }
   }

@@ -5,7 +5,7 @@
 //! - `edits/*.json`: table edits ([`crate::edits`]); `edits/if-<Mod>/`: applied only when
 //!   `<Mod>` is installed too;
 //! - `save/DefaultGame.json`: edits to the template save new games start from ([`crate::save`]);
-//! - `ue4ss/`: a UE4SS Lua mod (`Scripts/main.lua`) -> `ue4ss/Mods/<name>/`;
+//! - `ue4ss/`: a UE4SS mod, Lua (`Scripts/main.lua`) or C++ (`dlls/main.dll`) -> `ue4ss/Mods/<name>/`;
 //! - `ue4ss-shared/<name>X/`: Lua modules other mods `require` -> `ue4ss/Mods/shared/<name>X/`;
 //!
 //! plus assets cooked in the stub project (`/Game/Mods/<name>/`), packed as `zzz_<name>Content_P`.
@@ -698,6 +698,10 @@ impl Workspace {
     /// A dependency, from the mods folder (built into an entry) or else from the installed mods,
     /// checked against its version requirement.
     fn find_dependency(&self, dependency: &Dependency, at: &str) -> Result<Entry> {
+        // the tool carries its own Lua library: written when missing, updated when older
+        if dependency.name == "AlchemistsLibrary" {
+            crate::probe::write_library(&self.mods)?;
+        }
         let local = self.mods.join(&dependency.name);
         let entry = if local.join("mod.json").exists() {
             let local_mod = Mod::load(&local)?;
@@ -1208,9 +1212,12 @@ impl Workspace {
         let scripts = mod_.folder.join("ue4ss");
         if scripts.is_dir() {
             println!("== UE4SS mod ({})", display_path(&scripts));
-            if !scripts.join("Scripts").join("main.lua").exists() {
+            // A Lua mod has Scripts/main.lua, a C++ mod dlls/main.dll (UE4SS loads either from the folder)
+            if !scripts.join("Scripts").join("main.lua").exists()
+                && !scripts.join("dlls").join("main.dll").exists()
+            {
                 bail!(
-                    "{}: a UE4SS mod needs Scripts/main.lua",
+                    "{}: a UE4SS mod needs Scripts/main.lua (Lua) or dlls/main.dll (C++)",
                     display_path(&scripts)
                 );
             }
@@ -1615,8 +1622,14 @@ impl Workspace {
 
     /// Check that the tool's merged files `~mods/<base>.*` are exactly what it last wrote (as
     /// recorded), before any is replaced; a record from before the tool kept hashes accepts the
-    /// merged files it finds once.
-    fn check_generated(&self, files: &GameFiles, record: &Record, base: &str) -> Result<()> {
+    /// merged files it finds once. With `force`, a changed or unrecorded one is replaced anyway.
+    fn check_generated(
+        &self,
+        files: &GameFiles,
+        record: &Record,
+        base: &str,
+        force: bool,
+    ) -> Result<()> {
         let legacy = record.generated.is_empty();
         let prefix = PAK_FOLDER.join("/");
         for extension in ["pak", "utoc", "ucas"] {
@@ -1624,18 +1637,20 @@ impl Workspace {
             if !files.resolve(&relative)?.exists() {
                 continue;
             }
-            match record.generated.get(&relative) {
-                Some(recorded) if files.state(recorded)? == State::Unchanged => {}
-                Some(_) => bail!(
-                    "{relative} has changed since the tool wrote it, so it isn't replaced; move it \
-                     away (it may be another mod's) and run this again"
-                ),
-                None if legacy => {}
-                None => bail!(
-                    "{relative} wasn't written by the tool (it has no record of it), so it isn't \
-                     replaced; move it away and run this again"
-                ),
+            let problem = match record.generated.get(&relative) {
+                Some(recorded) if files.state(recorded)? == State::Unchanged => continue,
+                Some(_) => "has changed since the tool wrote it",
+                None if legacy => continue,
+                None => "wasn't written by the tool (it has no record of it)",
+            };
+            if force {
+                println!("warning: {relative} {problem}; replacing it anyway (--force)");
+                continue;
             }
+            bail!(
+                "{relative} {problem}, so it isn't replaced; move it away (it may be another \
+                 mod's) and run this again, or pass --force to replace it"
+            );
         }
         Ok(())
     }
@@ -1676,7 +1691,7 @@ impl Workspace {
     }
 
     /// Rebuild `zzz_ModTables_P` (and `zzz_ModSave_P`) from every installed mod's edits.
-    fn merge(&self, record: &mut Record) -> Result<()> {
+    fn merge(&self, record: &mut Record, force: bool) -> Result<()> {
         let order = load_order(&record.mods)?;
         self.report_clashes(&order, &record.mods)?;
         let present: HashSet<String> = order.iter().cloned().collect();
@@ -1690,8 +1705,8 @@ impl Workspace {
         let save_base = save_container(MERGED_SAVE);
         // every merged file is checked before any is touched, and both are built before either
         // is replaced, so a refusal or a failed build leaves the game folder as it was
-        self.check_generated(&files, record, &base)?;
-        self.check_generated(&files, record, &save_base)?;
+        self.check_generated(&files, record, &base, force)?;
+        self.check_generated(&files, record, &save_base, force)?;
         let save_work = self.merge_save(&order, &record.mods)?;
         let mut written = None;
         if !sources.is_empty() {
@@ -1745,7 +1760,7 @@ impl Workspace {
             "   re-merging the installed mods ({}) against the new tables",
             names.join(", ")
         );
-        self.merge(&mut record)?;
+        self.merge(&mut record, false)?;
         self.save_record(&record)
     }
 
@@ -1941,6 +1956,7 @@ impl Workspace {
         &self,
         mod_: &Mod,
         with_dependencies: bool,
+        force: bool,
         installing: &[String],
     ) -> Result<()> {
         if installing.contains(&mod_.name) {
@@ -1973,8 +1989,9 @@ impl Workspace {
                         .is_ok_and(|version| !satisfies(version, dependency))
                 });
                 if unmet || newer {
-                    // the tool carries its own Lua library, for mods that depend on it
-                    if !local.exists() && dependency.name == "AlchemistsLibrary" {
+                    // the tool carries its own Lua library, for mods that depend on it: written
+                    // when missing, and updated when the copy is older than the tool's
+                    if dependency.name == "AlchemistsLibrary" {
                         crate::probe::write_library(&self.mods)?;
                     }
                     if !local.exists() {
@@ -1986,7 +2003,12 @@ impl Workspace {
                     }
                     let mut chain = installing.to_vec();
                     chain.push(mod_.name.clone());
-                    self.install(&Mod::load(&self.mods.join(&dependency.name))?, true, &chain)?;
+                    self.install(
+                        &Mod::load(&self.mods.join(&dependency.name))?,
+                        true,
+                        force,
+                        &chain,
+                    )?;
                 }
             }
         }
@@ -2019,7 +2041,7 @@ impl Workspace {
             .unwrap_or_default();
 
         record.mods.insert(info.name.clone(), info.clone());
-        self.merge(&mut record)?;
+        self.merge(&mut record, force)?;
         for file in &new_files {
             let target = files.resolve(&file.path)?;
             if let Some(parent) = target.parent() {
@@ -2067,13 +2089,19 @@ impl Workspace {
         Ok(())
     }
 
-    /// Containers in `~mods` that no manifest lists and the tool didn't generate.
+    /// Containers in `~mods` that no manifest or record lists and the tool didn't generate.
     fn unowned_containers(&self, files: &GameFiles, record: &Record) -> Result<Vec<String>> {
         let owned: HashSet<String> = files
             .manifests()?
             .into_iter()
             .flat_map(|(_, manifest)| manifest.files.into_iter().map(|file| file.path))
             .chain(record.generated.keys().cloned())
+            .chain(
+                record
+                    .mods
+                    .values()
+                    .flat_map(|entry| entry.files.iter().cloned()),
+            )
             .collect();
         let prefix = PAK_FOLDER.join("/");
         let mut containers: Vec<String> = std::fs::read_dir(self.mods_paks_folder())
@@ -2198,7 +2226,7 @@ impl Workspace {
         }
         if entry.is_some() {
             record.mods.shift_remove(name);
-            self.merge(&mut record)?;
+            self.merge(&mut record, force)?;
         }
         let mut kept = vec![];
         if let Some(manifest) = &manifest {
@@ -2269,9 +2297,14 @@ impl Workspace {
             }
             owned.insert(GameFiles::manifest_path(name), name.clone());
             println!(
-                "   {name} {} (installed by {}): {unchanged} file(s) as installed{}{}",
+                "   {name} {} (installed by {}): {}{}{}",
                 manifest.version,
                 manifest.installed_by,
+                if manifest.files.is_empty() {
+                    "no files of its own (its edits are in the merged files)".to_string()
+                } else {
+                    format!("{unchanged} file(s) as installed")
+                },
                 if changed.is_empty() {
                     String::new()
                 } else {
@@ -2484,6 +2517,32 @@ impl Workspace {
                 ),
             }
         }
+        // A mod's zip holds paths from the game folder; extracted anywhere below it, they nest
+        let misplaced: Vec<String> = unknown
+            .iter()
+            .filter_map(|path| {
+                let below = path.strip_prefix("AlchemyFactory/Content/Paks/")?;
+                below
+                    .find("AlchemyFactory/")
+                    .map(|at| format!("AlchemyFactory/Content/Paks/{}", &below[..at]))
+            })
+            .chain(
+                unknown_ue4ss
+                    .keys()
+                    .filter(|top| *top == "AlchemyFactory")
+                    .map(|_| format!("{ue4ss_prefix}/")),
+            )
+            .collect::<BTreeSet<String>>()
+            .into_iter()
+            .collect();
+        for folder in &misplaced {
+            println!(
+                "   note: {folder}AlchemyFactory/ looks like a mod's zip extracted into {folder} \
+                 instead of the game folder. The game may still load its containers, but not \
+                 merged with the other mods' edits. Delete {folder}AlchemyFactory/, then extract the zip into the game folder, the one that holds \
+                 AlchemyFactory/"
+            );
+        }
 
         // Two containers with the same asset: only one copy takes effect
         let mut by_asset: BTreeMap<String, Vec<String>> = BTreeMap::new();
@@ -2576,9 +2635,10 @@ impl Workspace {
             "Extract this zip into the game's folder (Steam: right-click Alchemy Factory > Manage \
             > Browse local"
                 .to_string(),
-            "files), so that its AlchemyFactory folder merges with the game's. Then start the \
-            game."
+            "files), so that its AlchemyFactory folder merges with the game's. Not into ~mods: \
+            the zip"
                 .to_string(),
+            "already holds the folders down to it. Then start the game.".to_string(),
             String::new(),
         ]);
         let needed: Vec<&str> = mod_
@@ -2588,14 +2648,13 @@ impl Workspace {
             .map(|dependency| dependency.name.as_str())
             .collect();
         if !info.tables.is_empty() {
-            lines.push(format!(
-                "It replaces the game tables {}. Another mod that replaces one of them",
-                info.tables.join(", ")
-            ));
+            lines.push("It replaces these game tables:".to_string());
+            lines.extend(info.tables.iter().map(|table| format!("   {table}")));
             lines.extend([
-                "can't be used at the same time, unless both are installed with a tool \
-                that merges them."
+                "Another mod that replaces one of them can't be used at the same time, unless \
+                both are"
                     .to_string(),
+                "installed with a tool that merges them.".to_string(),
                 String::new(),
             ]);
         }
@@ -2647,12 +2706,12 @@ impl Workspace {
             ]);
         }
         lines.extend([
-            "Delete the files listed above, and AlchemyFactory/Content/Paks/~mods/manifests/"
-                .to_string(),
+            "Delete the files listed above, and this one:".to_string(),
             format!(
-                "{}.json (or run: alchemists-tools mod uninstall {}).",
-                mod_.name, mod_.name
+                "   AlchemyFactory/Content/Paks/~mods/manifests/{}.json",
+                mod_.name
             ),
+            format!("Or run: alchemists-tools mod uninstall {}", mod_.name),
             String::new(),
         ]);
         lines.join("\r\n")
@@ -2682,10 +2741,15 @@ impl Workspace {
         let manifest = Self::manifest_for(info, "zip", listed);
         zip.start_file(GameFiles::manifest_path(&mod_.name), options)?;
         zip.write_all((serde_json::to_string_pretty(&manifest)? + "\n").as_bytes())?;
-        zip.start_file("README.txt", options)?;
-        zip.write_all(Self::readme_for_zip(mod_, info).as_bytes())?;
         zip.finish()?;
         println!("zipped -> {}", display_path(&path));
+        // Install instructions and the description go beside the zip, not in it: mod sites show
+        // them on the mod's page
+        let readme = self
+            .build
+            .join(format!("{}_{}_README.txt", mod_.name, mod_.version));
+        std::fs::write(&readme, Self::readme_for_zip(mod_, info))?;
+        println!("README -> {}", display_path(&readme));
         Ok(path)
     }
 

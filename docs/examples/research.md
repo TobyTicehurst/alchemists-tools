@@ -1,21 +1,20 @@
 # Worked example: research and upgrades
 
-The mod `examples/ExampleResearch/` (in this repo) changes a research, an upgrade's cost, and what that upgrade does. A new
+The mod `examples/ExampleResearch/` (in this repo) changes a research's cost and time, and what an upgrade does. A new
 research that unlocks a new recipe is in `docs/examples/recipes.md`. One that unlocks a new building is in
 `docs/examples/buildings.md`.
 
 | Change | Status |
 |---|---|
-| Healing Potion research: 300 copper (was 570), 45 s (was 90 s) | Builds; not tried in game |
-| Factory Efficiency 1 costs 30 upgrade points (was 60) | Builds; not tried in game |
-| Factory Efficiency 1 gives +50 % production speed (was +25 %) | Builds; not tried in game |
+| Healing Potion research: 300 copper (was 570), half the time (45 points, was 90) | Confirmed in game: 7.5 s (was 15 s) |
+| Factory Efficiency 1 gives +50 % production speed (was +25 %) | Confirmed in game: machines ran 1.5 times as fast. Heat use rose by 50 % too, not by the 25 % of `FactoryConsumeSpeed` |
 
 ## The three tables
 
 - **`DT_SkillPoints`** is the research tree (the Z panel). Each row usually unlocks one recipe or
   building; the `Level1`–`Level10` rows raise the technology level.
-- **`DT_UpgradePoints`** is the upgrade tree, paid for in upgrade points. It has the same fields, but each
-  row unlocks one `DT_Improvements` row, of the same name.
+- **`DT_UpgradePoints`** is the upgrade tree, paid for in upgrade points: every upgrade costs 1. It has
+  the same fields, but each row unlocks one `DT_Improvements` row, of the same name.
 - **`DT_Improvements`** says what an upgrade does: a list of changes to attributes (`DT_Attributes`).
   Equipment and recognitions use it too.
 
@@ -35,7 +34,8 @@ Find the research in `data/DataTables/DT_SkillPoints.json`:
 ```
 
 - `UnlockCost` is a price: X gold, Y silver, Z copper.
-- `UnlockResearchPoints` is the research time in seconds, at 100 % Research Speed.
+- `UnlockResearchPoints` sets the research time, in proportion: in a test save research ran at 6 points
+  a second, so 90 points took 15 s. Cost and tier don't change the time.
 
 ```json
 {
@@ -50,20 +50,7 @@ Find the research in `data/DataTables/DT_SkillPoints.json`:
 
 `UnlockCost` is an object, so giving only `Z` keeps `X` and `Y` at 0.
 
-## 2. A cheaper upgrade
-
-In `DT_UpgradePoints`, `UnlockResearchPoints` is the cost in upgrade points: 60 × tier², so tier 1 costs
-60. `UnlockCost` isn't a cost here: its `Z` just counts rows. Leave it alone.
-
-```json
-{
-  "DT_UpgradePoints": {
-    "FactorySpeed1": {"UnlockResearchPoints": 30.0}
-  }
-}
-```
-
-## 3. A stronger upgrade
+## 2. A stronger upgrade
 
 The upgrade `FactorySpeed1` unlocks the improvement `FactorySpeed1`:
 
@@ -95,7 +82,11 @@ inventory slots). `Effects` is a list, so the edit gives both entries:
 
 The attributes, with their base values, are listed in `docs/FIELDS.md`.
 
-## 4. Build, install, test
+In game, machines ran 1.5 times as fast, but their heat use rose by 50 % too, so the fuel per product
+didn't change. Heat use seems to follow production speed, and what `FactoryConsumeSpeed` does is still
+to be worked out.
+
+## 3. Build, install, test
 
 ```
 alchemists-tools mod build ExampleResearch --mods examples
@@ -104,7 +95,7 @@ alchemists-tools mod install ExampleResearch --mods examples
 
 In a new save:
 - check the Healing Potion research's cost and time in its tooltip;
-- check Factory Efficiency 1's cost, and Device Production Speed once it's bought.
+- buy Factory Efficiency 1, and check Device Production Speed.
 
 ## A new research node
 
@@ -114,8 +105,8 @@ To add a node, copy an existing research with `_copy` and change what differs:
 "DT_SkillPoints": {
   "PlanksToLargeGear": {
     "_copy": "WoodGear",
-    "SlotPosition": {"X": -2, "Y": 5},
-    "Predecessors": ["Processor"],
+    "SlotPosition": {"X": -1, "Y": 5},
+    "Predecessors": ["WoodGear"],
     "UnlockItem": {"ConfigName": "PlanksToLargeGear", "ConfigType": "CraftingRecipes"}
   }
 }
@@ -126,9 +117,10 @@ To add a node, copy an existing research with `_copy` and change what differs:
   - `ConstructOptions` for a building.
 
   `ExtraUnlockConstructions` adds more buildings, and `LevelUnlockItems` makes items purchasable.
-- **Where it goes:** `SlotPosition`, at least one row below every predecessor. Links are drawn downwards,
-  so a node level with its predecessor gets a link through that node. Two researches can't share a
-  place; the build stops if they do.
+- **Where it goes:** `SlotPosition`, below every predecessor, best in the row just below. A link runs
+  down the predecessor's column, then sideways in the row above the node, so a node in that column in
+  between looks like where the link comes from. The build warns about both. Two researches can't share
+  a place; the build stops if they do.
 - **What it needs first:** `Predecessors`.
 - **Cost and time** are copied from the `_copy` row unless you give them.
 

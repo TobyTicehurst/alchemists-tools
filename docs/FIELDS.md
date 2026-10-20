@@ -188,7 +188,7 @@ building IDs (`Processor`, `Kiln`, `SmallContainer`). A row with `_copy` makes a
 | `FurnitureType` | choice: `Logistics`, `Normal`, `CanInteract`, `Construct`, `ConstructV2`, `Pipeline`, `Railroad` | Kind of building; machines are `CanInteract` | Known |
 | `SecondaryType`, `SecondaryIndirect` | choice, whole number | For belts, floors, elevators and similar: which of the [other tables](#other-tables) describes it, and its row there | Known |
 | `bHideInGame`, `bHideInCreative` | true/false | Hidden from the build menu | Known |
-| `HeatCost` | decimal | Heat used per second (fuel use = `HeatCost ÷ HeatValue`) | Known |
+| `HeatCost` | decimal | Heat used per second (fuel use = `HeatCost ÷ HeatValue`), as the tooltip shows | **Tooltip only?** Set from 15 to 10, a newly built Kiln's tooltip said 10, but it still used 15 a second |
 | `DisableRotator` | true/false | Can't be rotated | Known |
 | `ScriptClass` | asset (Blueprint class) | The Blueprint spawned: the building's model, parts and behaviour | **Confirmed** |
 | `InstanceMesh`, `bInstanceAffectsNavigation` | asset, true/false | A model drawn instanced (blocks, belts) | Unknown |
@@ -227,10 +227,10 @@ unlock. Most unlock one thing; the `Level1`–`Level10` rows raise the technolog
 | `Tier` | whole number | The tree's band | Known |
 | `LevelSkill` | true/false | A technology-level node (`Level1`–`Level10`) | Known |
 | `UpgradeSkill` | true/false | Always false here (true in `DT_UpgradePoints`) | Known |
-| `SlotPosition` | point | Place in the tree: X left/right, Y down. Links are drawn downwards, so put a node at least one row below its predecessors | **Confirmed** |
+| `SlotPosition` | point | Place in the tree: X left/right, Y down. Links run down the predecessor's column, then sideways in the row above the node, so put a node in the row just below its predecessors | **Confirmed** |
 | `Predecessors` | list of names | Researches needed first | **Confirmed** |
 | `UnlockCost` | price | Cost to research | Known |
-| `UnlockResearchPoints` | decimal | Research time in seconds at 100 % Research Speed | Known |
+| `UnlockResearchPoints` | decimal | Research time, in proportion: 6 points a second in a level-120 Sandbox save (57 → 9.5 s, 90 → 15 s, 45 → 7.5 s, 180 → 30 s). Cost and tier don't change it | **Confirmed** |
 | `UnlockItem` | unlock | What it unlocks: a recipe (`CraftingRecipes`) or a building (`ConstructOptions`) | **Confirmed** (both) |
 | `LevelUnlockItems` | list of names | Items that become purchasable | Known |
 | `ExtraUnlockConstructions` | list of names | More buildings it unlocks | Known |
@@ -247,7 +247,7 @@ so changing what it unlocks has no effect.
 
 | Field | What it does here |
 |---|---|
-| `UnlockResearchPoints` | **The cost in upgrade points**: 60 × tier² (60, 240, 540, …), and 10,140 for tier 13 |
+| `UnlockResearchPoints` | 60 × tier² (60, 240, 540, …), and 10,140 for tier 13. **Not the cost**: every upgrade costs 1 point. What it does is unknown |
 | `UnlockCost` | Not a cost: `Z` counts rows. Ignore it |
 | `IsUnlimited`, `MaxUnlimitedLevel` | Tier 13 repeats, up to 80 times |
 | `SlotPosition`, `Predecessors`, `Deprecated` | As for research |
@@ -374,7 +374,7 @@ tier needs the one before.
 |---|---|---|---|
 | `PlantName` | name | The item it grows | Known |
 | `GrowthSeconds` | whole number | Time to grow | Known |
-| `GrowthNutrientValue` | decimal | Fertilizer needed (the "V" in game) | **Confirmed** (Flax 24 → 12; its tooltip still said 24, but that was with the edit made while the game ran) |
+| `GrowthNutrientValue` | decimal | Fertilizer needed (the "V" in game) | **Confirmed** (Flax 24 → 12). The tooltip still says 24, even with a `.pak` mod; where it gets its number is unknown |
 | `GrowthNum` | whole number | How many it yields | Known |
 | `SideProductName`, `SideGrowthNum` | name, whole number | A second product, and how many | Known |
 | `SeedMesh`, `PlantMesh` | assets | Models | Known |

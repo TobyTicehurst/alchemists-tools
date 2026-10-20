@@ -59,7 +59,7 @@ mods/MyMod/
   edits/*.json           changes to the game's tables
   edits/if-Other/        changes applied only when the mod Other is installed too
   save/DefaultGame.json  changes to the save new games start from (numbers and true/false)
-  ue4ss/                 a UE4SS Lua mod (Scripts/main.lua)
+  ue4ss/                 a UE4SS mod: Lua (Scripts/main.lua) or C++ (dlls/main.dll)
   ue4ss-shared/MyModX/   Lua modules other mods `require`
 ```
 
@@ -88,7 +88,7 @@ a research on its predecessor's row, a new building nothing unlocks).
 alchemists-tools mod build MyMod                       # -> build/MyMod/, laid out like the game folder
 alchemists-tools mod install MyMod --with-dependencies
 alchemists-tools mod uninstall MyMod [--force]
-alchemists-tools mod dist MyMod                        # -> build/MyMod_<version>.zip, with a README
+alchemists-tools mod dist MyMod                        # -> build/MyMod_<version>.zip, and a README beside it
 alchemists-tools mod list
 alchemists-tools mod scan                              # every mod in the game folder, and its files
 ```

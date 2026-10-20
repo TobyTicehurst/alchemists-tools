@@ -1,11 +1,11 @@
 # Worked example: buildings
 
-The mod `examples/ExampleBuildings/` (in this repo) makes the Kiln cheaper and adds a new building: the Stone Processor, a
+The mod `examples/ExampleBuildings/` (in this repo) makes the Kiln cheaper to build and adds a new building: the Stone Processor, a
 Processor built from Stone, with a research that unlocks it.
 
 | Change | Status |
 |---|---|
-| Kiln: 10 Stone + 5 Clay (was 20 + 10), 10 heat per second (was 15) | Builds; not tried in game |
+| Kiln: 10 Stone + 5 Clay (was 20 + 10) | Confirmed in game |
 | New building: Stone Processor, with its research | Builds. The same kind of row (a copied Processor) worked in game |
 
 A building's data is a row of `DT_Buildings`. Its model, parts and behaviour are its Blueprint, which the
@@ -35,15 +35,17 @@ From `data/DataTables/DT_Buildings.json`:
       "CostList": [
         {"IngredientName": "Stone", "Count": 10},
         {"IngredientName": "Clay", "Count": 5}
-      ],
-      "HeatCost": 10.0
+      ]
     }
   }
 }
 ```
 
-`CostList` is a list, so every ingredient is given. `HeatCost` is heat per second. A fuel item's
-`HeatValue` (`DT_Enemies`) is heat per unit, so fuel use is `HeatCost ÷ HeatValue`.
+`CostList` is a list, so every ingredient is given.
+
+**`HeatCost` can't be changed this way yet.** It's the heat used per second, and the tooltip follows it,
+but a Kiln built with it set to 10 still used 15 a second. Where the real value comes from is still to
+be worked out.
 
 ## 2. Add a building
 
@@ -85,7 +87,7 @@ Every new building needs a research that unlocks it, with `ConfigType` `Construc
   "DT_SkillPoints": {
     "StoneProcessor": {
       "_copy": "Processor",
-      "SlotPosition": {"X": -2, "Y": 6},
+      "SlotPosition": {"X": 2, "Y": 4},
       "Predecessors": ["Processor"],
       "UnlockItem": {"ConfigName": "StoneProcessor", "ConfigType": "ConstructOptions"}
     }
@@ -93,7 +95,7 @@ Every new building needs a research that unlocks it, with `ConfigType` `Construc
 }
 ```
 
-The node goes at least one row below its predecessor, in a free place (`docs/examples/research.md`).
+The node goes in the row just below its predecessor, in a free place (`docs/examples/research.md`).
 
 ## 3. Build, install, test
 
@@ -103,7 +105,7 @@ alchemists-tools mod install ExampleBuildings --mods examples
 ```
 
 The install names the new building with a warning (below). In a new or Sandbox save:
-1. Research the Stone Processor: two columns left of the Processor, three rows below it.
+1. Research the Stone Processor: one row below the Processor's research, two columns right.
 2. Find it last among the active crafting machines in the build menu, and check its cost and name.
 3. Place it, and check that it crafts like a Processor.
 
@@ -113,7 +115,7 @@ The install names the new building with a warning (below). In a new or Sandbox s
 - before uninstalling, deconstruct every placed Stone Processor in every save you keep;
 - never rename or remove a building row in a mod people use.
 
-The install, the uninstall and the zip's README all say this for each new building.
+The install, the uninstall and the README `dist` writes all say this for each new building.
 
 ## Other things to change
 

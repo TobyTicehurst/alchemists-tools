@@ -14,6 +14,12 @@
       "CostValue": {"Z": 120}
     }
   },
+  "DT_EnemyCrafting": {
+    "Stone": {
+      "_comment": "The Stone Crusher's recipe for Limestone. Its FractionNum is probably what the tooltip shows as the Stone per Limestone, so it changes with MaximumStack (was 150)",
+      "FractionNum": 300
+    }
+  },
   "DT_PlantSeedConfig": {
     "FlaxSeed": {
       "_comment": "Flax needs 12 V of fertilizer to grow (was 24)",
