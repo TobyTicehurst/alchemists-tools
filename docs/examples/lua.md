@@ -183,6 +183,41 @@ Use Lua for what tables can't do.
   them.
 - **Arrays:** an array a function returns arrives as a Lua table; an array property needs
   `Library.list`. There's no `ForEach` on a returned array.
+- **A deconstructed building lingers.** Its object stays valid (`IsValid()` is true, and it's still found by
+  `FindAllOf`) for about ten seconds, until the game frees it. `actor.bActorIsBeingDestroyed` is true from the
+  moment it's deconstructed: check that before counting a building as placed.
+- **Old worlds linger too.** After loading a save, objects from the main menu's background scene (its own
+  grid subsystem, say) can still be found for a while, so `FindFirstOf` may return the wrong one. Drop cached
+  objects when a map loads (`RegisterLoadMapPreHook(function() ... end)`), and prefer objects you were given
+  (a hook's context) to ones you search for.
+- **Keep track of objects as they appear, rather than searching for them.** `NotifyOnNewObject` on a class,
+  with the real work queued for a later tick (the object isn't filled in yet), builds a list as the world
+  loads; scanning every object (`ForEachUObject`) for each lookup is slow.
+- **What the player is about to build:** `EnterBuildMode` fires only when a building is chosen from the build
+  menu, not from the quickbar, and never for blueprints or bulk clone. The cost panel shows what the current
+  choice costs whichever way it was chosen: `WBP_BuildCostPanel_C:AddIngredientData` is called with each
+  item and count as it fills (seen in a third-party mod; untested here), and each `WBP_ItemCostInfo` widget
+  holds one item's "have/need".
+- **A key isn't a game event.** A key bind on Esc or the right mouse button runs whether or not the game
+  cancels anything then. To know when building starts or ends, post-hook
+  `BeltTDPlayerController:GetCurrentStateName` (`Build`, `Clone`, `Remove`, `Idle`) instead.
+- **Recognise buildings by their row, not their name.** An actor's `ConfigName` is its `DT_Buildings` row; its
+  object name (`BP_MetalContainer_C_2147466526`) only says which Blueprint it uses, many rows share a
+  Blueprint, and names differ from machine to machine.
+- **Moving items the way a player does:** `inventory:TryExchangeInventorySlot(fromComponent, fromIndex,
+  toComponent, toIndex)` swaps two slots, and `MoveInventorySlot(fromComponent, index, toComponent)` moves one,
+  as the inventory screen does (`inventory` is the player's, from `GetPlayerInventory()`). They act a moment
+  later, not at once, so read the slots again after the next `BeltTDPlayerController:OnInventoryUpdate`.
+  Untested here in multiplayer; being the screen's own actions, they're likelier to stay in step than writing
+  slots directly. To read one slot, `component:GetSlotData(index, {}, {})` returns its item, with the count
+  and filter in the out tables (on the player's inventory and on chests).
+- **Lending items to the player's inventory runs out of room.** A mod that moves chest items into the
+  inventory so the game can charge them there needs a free slot per item, and none of the player's own of
+  that item to keep the two apart; a full inventory, often the very problem, stops it. Changing what the
+  game charges needs a C++ mod (`docs/MODDING.md`, "C++ UE4SS mods").
+- **`GetInventoryItemNum` was reported to crash a third-party mod**; `CostDisplayTest` called it constantly
+  from the build tool without trouble. As with `GetCurrentStateName` above, the likely rule is: call game
+  functions only once a save has loaded.
 - **Multiplayer is lockstep.** Every player's game runs the same simulation from the players' commands. A
   mod that changes the game must:
   - change it on every player's machine, in the same step and order: in hooks on the simulation, never

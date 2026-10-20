@@ -362,6 +362,26 @@ The library's comments explain the rules:
 - use game objects on the game thread;
 - in multiplayer, change the game only in ways every player's machine repeats exactly.
 
+More rules, learned in game, are in `docs/examples/lua.md` ("Rules").
+
+### C++ UE4SS mods
+
+Lua can hook only what the game calls through the reflection system (Blueprints and the user interface). The
+game's own C++ (building, charging costs, refunds, stack limits) calls itself directly, so changing that needs a
+UE4SS C++ mod: a DLL that detours the game's native code. Put the built DLL at `ue4ss/dlls/main.dll` in the mod
+folder; the tool installs it as it does a Lua mod, with the mod's table edits beside it.
+
+Building one:
+- it must be compiled against the source of the exact UE4SS build installed (the "Git SHA" on the second line
+  of `ue4ss/UE4SS.log`), with Visual Studio 2022 (MSVC 14.43 or later), Rust and CMake;
+- part of that source (UEPseudo) is private to GitHub accounts linked to an Epic Games account, with the
+  invitation to the EpicGames organisation accepted;
+- native code changes with game updates: find it at run time from the reflection data where possible
+  (a reflected function's exec thunk leads to its C++ body), and switch the mod off if it isn't found.
+
+[Alchemist's Vault](https://github.com/TobyTicehurst/alchemists-vault) is one, kept apart from this repository;
+its `docs/research.md` explains the method.
+
 ## Cooked content
 
 Blueprints, meshes, textures and material instances are made and cooked in a stub Unreal project.
