@@ -176,6 +176,11 @@ Use Lua for what tables can't do.
   controller has no state yet) crashed the game. To know the state, post-hook it instead: the user
   interface calls it on every change, and as it takes no parameters, the post-hook gets its real return
   value.
+- **Use UE4SS's game-thread timers, not `LoopAsync` or `ExecuteWithDelay`.** Those two run their callback on UE4SS's
+  async thread (UE4SS 3.0.1 marks them deprecated). A UI script that called `ExecuteWithDelay` often, queuing work
+  for the game thread from there, crashed the game inside UE4SS after the log line `Ref was not function`
+  (2026-10-22): Lua isn't safe to use from two threads at once. `ExecuteInGameThreadWithDelay(ms, work)` and
+  `LoopInGameThreadWithDelay(ms, work)` (stopped with `CancelDelayedAction(handle)`) run on the game thread.
 - **Use game objects on the game thread.** Key binds and timers may run elsewhere. `Library.keybind` and
   `Library.on_game_thread` take care of it, and `LoopInGameThreadWithDelay(ms, work)` repeats work there.
 - **A hook on a Blueprint function runs after it, and gets no arguments.** UE4SS calls Lua hooks on Blueprint
