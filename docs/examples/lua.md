@@ -178,6 +178,13 @@ Use Lua for what tables can't do.
   value.
 - **Use game objects on the game thread.** Key binds and timers may run elsewhere. `Library.keybind` and
   `Library.on_game_thread` take care of it, and `LoopInGameThreadWithDelay(ms, work)` repeats work there.
+- **A hook on a Blueprint function runs after it, and gets no arguments.** UE4SS calls Lua hooks on Blueprint
+  (`/Game/...`) functions once the function has run, so a hook can't change what it does, and in this game it passes
+  none of the function's parameters (seen with `WBP_ItemCostInfo_C:UpdateCostInfo`, 2026-10-22: UE4SS reads the
+  parameter count, which comes back as 0). Read what the function left behind instead: the widget's properties, or
+  the text it wrote.
+- **A uniform grid keeps a row for every row a child names, hidden or not.** To hide a tile in a
+  `UniformGridPanel` (an inventory grid), collapse it and move it to row 0, column 0, or the grid keeps empty rows.
 - **Functions the game's C++ calls directly can't be hooked.** Building and deconstructing never called
   the inventory functions a probe hooked. They fire only when a Blueprint or the user interface calls
   them.
