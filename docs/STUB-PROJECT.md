@@ -119,6 +119,38 @@ Without the editor:
 The cooked files are in `<project>/Saved/Cooked/Windows/AlchemyFactory/Content/`. **Cook again after every
 save in the editor**: the build stops when an asset was saved after its last cook, or was never cooked.
 
+## Scripting the editor
+
+The editor can make assets without being opened, from a Python script. Confirmed 2026-10-22: a script made four
+stand-in meshes, two stand-in material instances and a Blueprint with nine components (meshes, materials,
+collision presets, transforms, tags, a component's own property), and the cook and the game took them.
+
+1. Enable the engine's Python plugin in `AlchemyFactory.uproject`:
+   `{"Name": "PythonScriptPlugin", "Enabled": true, "TargetAllowList": ["Editor"]}` in `Plugins`.
+2. With the editor closed, run the script, then cook:
+   ```
+   "C:\Program Files\Epic Games\UE_5.7\Engine\Binaries\Win64\UnrealEditor-Cmd.exe" "<project>\AlchemyFactory.uproject" -run=pythonscript -script=<script.py> -unattended -nullrhi
+   ```
+   `print` and `unreal.log` go to the editor's log; writing your own log file under
+   `unreal.Paths.project_saved_dir()` is easier to read.
+
+What a script uses:
+- stand-ins: `unreal.EditorAssetLibrary.duplicate_asset("/Engine/BasicShapes/Cube", path)`, and
+  `AssetTools.create_asset(name, folder, unreal.MaterialInstanceConstant, unreal.MaterialInstanceConstantFactoryNew())`;
+- a Blueprint on a game class: `unreal.BlueprintFactory` with `parent_class` set to
+  `unreal.load_class(None, "/Script/BeltTD.DynamicFurnitureActor")`;
+- its components: `unreal.SubobjectDataSubsystem` (`k2_gather_subobject_data_for_blueprint`, `add_new_subobject`,
+  `rename_subobject`), each component's template from `SubobjectDataBlueprintFunctionLibrary`, set with
+  `set_editor_property` and `set_collision_profile_name`;
+- then `unreal.BlueprintEditorLibrary.compile_blueprint` and `EditorAssetLibrary.save_loaded_asset`.
+
+**A stand-in limits material overrides:** the editor keeps only as many `override_materials` as the mesh has
+material slots, and the engine's cube has one. A game mesh with two slots then uses its own default material in
+the second. A stand-in with more slots needs a mesh that has them.
+
+Reading the saved Blueprint back in the editor (another script loading it) is the reliable check: the tools'
+component listing names the components but doesn't decode their settings from cooked files.
+
 ## From cooked files to a mod
 
 A mod folder's `mod.json` lists its cooked folders:

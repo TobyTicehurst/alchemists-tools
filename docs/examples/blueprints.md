@@ -127,10 +127,14 @@ The build:
 ```
 == cooked content (/Game/Mods/MyMachine)
    /Game/Mods/MyMachine/BP_MyMachine:
-      CraftFacility: craft type Assemble
+      CraftFacility: CraftFacilityComponent
       DefaultSceneRoot: SceneComponent
-      Gear1 (in StaticMesh): SM_Processor_3, material MI_AdvancedAthanorRotator, collision Furniture, ...
+      Gear1: StaticMeshComponent
+      ...
 ```
+
+  It names each component and its class; to check a component's settings (mesh, materials, collision), read
+  the saved Blueprint back in the editor (`docs/STUB-PROJECT.md`, "Scripting the editor").
 
 In a new or Sandbox save:
 1. Research My Machine.

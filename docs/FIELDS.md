@@ -70,7 +70,9 @@ Objects that appear in many tables:
 
 **Unit items.** An item with a negative `MaximumStack` is a *unit item*: one item holds
 `-MaximumStack` units (Logs 200, Limestone 150, Iron Ore 100). Recipes and quest rewards count these
-items in units. Quest requirements count whole items.
+items in units. Quest requirements count whole items. In an inventory, each unit item takes a slot of its
+own, and the slot's count is its units (a whole Log: 200; one a Table Saw has started: 199), so unit items
+never stack. On a belt, an item's count is in units too.
 
 ## How changes reach a game
 
