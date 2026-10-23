@@ -195,6 +195,12 @@ Use Lua for what tables can't do.
   them.
 - **Arrays:** an array a function returns arrives as a Lua table; an array property needs
   `Library.list`. There's no `ForEach` on a returned array.
+- **`ForEach`: return `true` to stop, and nothing otherwise, never `false`.** UE4SS (3.0.1 here) takes a returned
+  `false` off the stack twice, and the next element calls nil: "attempt to call a nil value" at the `ForEach` line.
+  (AlchemistsVault 0.8.0's first try, 2026-10-23.)
+- **No weak pointers, so no binding delegates.** A delegate's `Add` (`button.OnClicked:Add(object, "Function")`)
+  makes an `FWeakObjectPtr`, whose serial number crashes the game inside UE4SS (`AllocateSerialNumber`). The same
+  goes for a C++ mod making one. Read a widget's state by polling instead. (AlchemistsVault 0.8.0, 2026-10-23.)
 - **A deconstructed building lingers.** Its object stays valid (`IsValid()` is true, and it's still found by
   `FindAllOf`) for about ten seconds, until the game frees it. `actor.bActorIsBeingDestroyed` is true from the
   moment it's deconstructed: check that before counting a building as placed.
