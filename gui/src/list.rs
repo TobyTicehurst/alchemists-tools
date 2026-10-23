@@ -86,6 +86,10 @@ impl App {
                         current: current.as_deref(),
                         enabled: self.running.is_none(),
                         ue4ss_missing,
+                        nexus_update: self
+                            .browse
+                            .newer_version(summary)
+                            .map(|found| found.version.as_str()),
                     };
                     actions.extend(row.show(ui, &mut self.thumbnails));
                 }
@@ -218,6 +222,16 @@ impl App {
             });
         });
         ui.add_space(8.0);
+        if let Some(found) = self.browse.newer_version(summary) {
+            ui.horizontal(|ui| {
+                ui.colored_label(ui.visuals().hyperlink_color, "⬇");
+                ui.label(format!(
+                    "Nexus Mods has version {}, updated {}:",
+                    found.version, found.updated
+                ));
+                ui.hyperlink_to("download it from its page", found.page());
+            });
+        }
         for note in summary.notes(current.as_deref()) {
             callout(ui, "⚠", &note, warn);
         }
@@ -379,6 +393,8 @@ struct Row<'a> {
     enabled: bool,
     /// The game was found without UE4SS.
     ue4ss_missing: bool,
+    /// A newer version on Nexus Mods.
+    nexus_update: Option<&'a str>,
 }
 
 impl Row<'_> {
@@ -434,6 +450,14 @@ impl Row<'_> {
                 if !warnings.is_empty() {
                     ui.colored_label(warn, RichText::new("⚠").strong())
                         .on_hover_text(warnings.join("\n\n"));
+                }
+                if let Some(version) = self.nexus_update {
+                    chip(ui, "update on Nexus", ui.visuals().hyperlink_color).on_hover_text(
+                        format!(
+                            "Nexus Mods has version {version}: download it from the mod's page \
+                             (its details link it)"
+                        ),
+                    );
                 }
                 // what it needs and changes, known before it's ticked
                 if summary.changes_tables {

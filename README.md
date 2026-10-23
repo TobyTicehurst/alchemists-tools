@@ -71,7 +71,8 @@ start, UE4SS or a mod's C++ isn't ready for the new build: the GUI offers to dis
 
 **Nexus Mods** lists the game's mods on [Nexus Mods](https://www.nexusmods.com/games/alchemyfactory/mods), with
 their pictures, summaries and files, marking those already in your mods folders. To install one, download its zip
-from its page and import it.
+from its page and import it. A mod whose homepage is its Nexus page is marked in the Mods view when Nexus has a
+newer version.
 
 **Import a zip** takes a mod made without this tool, such as an older download from a mod site, as far as it can
 safely: it refuses zips it can't place safely, and marks what it can't check (see

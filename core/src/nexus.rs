@@ -79,6 +79,31 @@ pub fn mod_id_in(link: &str) -> Option<u32> {
     digits[..end].parse().ok()
 }
 
+/// Whether Nexus's version of a mod is newer than this one. Nexus's versions are free text
+/// (`1`, `v0.1.8`, `1.0.4931-1`), so each is read as up to three numbers, the rest left out:
+/// `1` and `1.0.0` are the same.
+pub fn is_newer(nexus_version: &str, version: &str) -> bool {
+    let numbers = |text: &str| -> [u64; 3] {
+        let mut numbers = [0; 3];
+        let start = text.find(|character: char| character.is_ascii_digit());
+        let parts = start
+            .map(|start| &text[start..])
+            .unwrap_or_default()
+            .split('.')
+            .map(|part| {
+                let end = part
+                    .find(|character: char| !character.is_ascii_digit())
+                    .unwrap_or(part.len());
+                (end > 0).then(|| part[..end].parse().unwrap_or(u64::MAX))
+            });
+        for (slot, number) in numbers.iter_mut().zip(parts.map_while(|number| number)) {
+            *slot = number;
+        }
+        numbers
+    };
+    numbers(nexus_version) > numbers(version)
+}
+
 /// The game's published mods (not those marked adult), most endorsed first.
 pub fn mods() -> Result<Vec<NexusMod>> {
     const QUERY: &str = "query Mods($offset: Int!, $count: Int!) {
@@ -287,6 +312,15 @@ mod tests {
         );
         assert_eq!(mod_id_in("https://www.nexusmods.com/skyrim/mods/15"), None);
         assert_eq!(mod_id_in("https://github.com/someone/mod"), None);
+    }
+
+    #[test]
+    fn versions() {
+        assert!(is_newer("2", "1.0.0"));
+        assert!(is_newer("v0.1.10", "0.1.9"));
+        assert!(!is_newer("1", "1.0.0"));
+        assert!(!is_newer("1.0.4931-1", "1.0.4931"));
+        assert!(!is_newer("beta", "0.1.0"));
     }
 
     #[test]

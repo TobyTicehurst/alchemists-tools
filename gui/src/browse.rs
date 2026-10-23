@@ -134,7 +134,27 @@ impl Browse {
         });
     }
 
-    fn receive(&mut self) {
+    /// Read the mods, if they haven't been: for the Mods view's update marks.
+    pub fn load_once(&mut self, context: &egui::Context) {
+        if !self.started {
+            self.load(context);
+        }
+    }
+
+    /// A mod on Nexus, once they've been read.
+    pub fn by_id(&self, id: u32) -> Option<&NexusMod> {
+        self.mods.iter().find(|found| found.id == id)
+    }
+
+    /// The newer version on Nexus of a mod linked to its page by its homepage, if there is one.
+    pub fn newer_version(&self, summary: &Summary) -> Option<&NexusMod> {
+        nexus::mod_id_in(&summary.homepage)
+            .and_then(|id| self.by_id(id))
+            .filter(|found| nexus::is_newer(&found.version, &summary.version))
+    }
+
+    /// Take in what the background has read.
+    pub fn receive(&mut self) {
         while let Ok(loaded) = self.receiver.try_recv() {
             match loaded {
                 Loaded::Mods(Ok(mods)) => {
@@ -163,11 +183,8 @@ impl Browse {
         thumbnails: &mut Thumbnails,
         idle: bool,
     ) -> Option<Asked> {
-        self.receive();
-        if !self.started {
-            let context = ui.ctx().clone();
-            self.load(&context);
-        }
+        let context = ui.ctx().clone();
+        self.load_once(&context);
         let mut asked = None;
         egui::Panel::left("nexus list")
             .resizable(true)

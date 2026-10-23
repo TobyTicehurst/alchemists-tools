@@ -20,6 +20,7 @@ use alchemists_core::game::display_path;
 use alchemists_core::mods::{
     parse_version, requirement_text, satisfies, Kind, Origin, Overview, Summary, Unmanaged,
 };
+use alchemists_core::nexus;
 use alchemists_core::release::{self, Release};
 use alchemists_core::report::{Level, Message};
 use alchemists_core::settings::Settings;
@@ -639,6 +640,16 @@ impl App {
 impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.receive();
+        self.browse.receive();
+        // mods linked to their Nexus page are marked when Nexus has a newer version
+        let linked = self
+            .overview
+            .mods
+            .iter()
+            .any(|summary| nexus::mod_id_in(&summary.homepage).is_some());
+        if linked {
+            self.browse.load_once(ui.ctx());
+        }
         if let Some(check) = &self.release_check {
             if let Ok(release) = check.try_recv() {
                 self.newer_release = release;
