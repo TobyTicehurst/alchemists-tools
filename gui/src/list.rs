@@ -59,6 +59,7 @@ impl App {
         };
         let installed = self.installed_names();
         let current = self.overview.game_build.clone();
+        let ue4ss_missing = matches!(self.ue4ss, Some(ue4ss::Installed::None));
         let mut actions = vec![];
         egui::ScrollArea::vertical()
             .auto_shrink([false, false])
@@ -79,6 +80,7 @@ impl App {
                             .unwrap_or(&[]),
                         current: current.as_deref(),
                         enabled: self.running.is_none(),
+                        ue4ss_missing,
                     };
                     actions.extend(row.show(ui, &mut self.thumbnails));
                 }
@@ -370,6 +372,8 @@ struct Row<'a> {
     marks: &'a [Message],
     current: Option<&'a str>,
     enabled: bool,
+    /// The game was found without UE4SS.
+    ue4ss_missing: bool,
 }
 
 impl Row<'_> {
@@ -398,15 +402,10 @@ impl Row<'_> {
                 summary.thumbnail.as_deref(),
                 22.0,
             );
-            let mut title = RichText::new(&summary.title);
-            if self.selected {
-                title = title.strong();
-            }
-            let label = ui.selectable_label(self.selected, title);
-            if label.clicked() || checkbox.clicked() {
+            if checkbox.clicked() {
                 actions.push(Action::Select(Selection::Mod(summary.name.clone())));
             }
-            ui.label(RichText::new(&summary.version).weak().small());
+            // the tags first, from the right; then the title, shortened to fit what's left
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 let warn = ui.visuals().warn_fg_color;
                 let error = ui.visuals().error_fg_color;
@@ -430,6 +429,25 @@ impl Row<'_> {
                 if !warnings.is_empty() {
                     ui.colored_label(warn, RichText::new("⚠").strong())
                         .on_hover_text(warnings.join("\n\n"));
+                }
+                // what it needs and changes, known before it's ticked
+                if summary.changes_tables {
+                    chip(ui, "changes tables", Color32::GRAY).on_hover_text(
+                        "Changes the game's tables (recipes, items, research...): merged with the \
+                         other mods' changes when it's installed",
+                    );
+                }
+                if summary.needs_ue4ss {
+                    let (color, hint) = if self.ue4ss_missing {
+                        (
+                            warn,
+                            "Has Lua or C++ that UE4SS runs, and UE4SS isn't installed: install \
+                             it in Setup first",
+                        )
+                    } else {
+                        (Color32::GRAY, "Has Lua or C++ that UE4SS runs")
+                    };
+                    chip(ui, "needs UE4SS", color).on_hover_text(hint);
                 }
                 if summary.error.is_some() {
                     chip(ui, "broken", error)
@@ -506,6 +524,19 @@ impl Row<'_> {
                     }
                     _ => {}
                 }
+                ui.label(RichText::new(&summary.version).weak().small());
+                ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
+                    let mut title = RichText::new(&summary.title);
+                    if self.selected {
+                        title = title.strong();
+                    }
+                    let label = ui
+                        .add(egui::Button::selectable(self.selected, title).truncate())
+                        .on_hover_text(&summary.title);
+                    if label.clicked() {
+                        actions.push(Action::Select(Selection::Mod(summary.name.clone())));
+                    }
+                });
             });
         });
         actions

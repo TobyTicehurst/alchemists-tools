@@ -48,7 +48,8 @@ function), a required mod isn't ticked, or a file can't be replaced (the game is
 it was. The reason is shown, and the mods it's about are marked ✖. After a successful install, mods that warned are
 marked ⚠.
 
-Clicking a mod shows its details: its picture (`thumbnail.png` in its folder), version, dependencies, the game build
+Each mod is tagged if it needs UE4SS (in orange while UE4SS isn't installed) or changes the game's tables, so
+it's clear before ticking it. Clicking a mod shows its details: its picture (`thumbnail.png` in its folder), version, dependencies, the game build
 it's made for (marked when the game is newer), the tables it changes and the game functions it hooks. Ticking a mod
 ticks the mods it requires; unticking one unticks the mods that require it. Files installed by hand or by another
 tool are listed apart, since this tool can't remove them. Mods installed from a zip, or without a manifest, are

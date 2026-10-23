@@ -27,6 +27,9 @@ impl Workspace {
                     thumbnail: found.thumbnail(),
                     game_build: found.game_build.clone(),
                     detours: found.detours.clone().unwrap_or_default(),
+                    needs_ue4ss: folder.join("ue4ss").is_dir()
+                        || folder.join("ue4ss-shared").is_dir(),
+                    changes_tables: !found.edits.is_empty() || !found.optional_edits.is_empty(),
                     error: (found.name != name).then(|| {
                         format!(
                             "its mod.json names it {}; name its folder the same",
@@ -51,6 +54,13 @@ impl Workspace {
             summary.folder = Some(folder);
             mods.insert(name, summary);
         }
+        let ue4ss_prefix = format!("{}/", UE4SS_FOLDER.join("/"));
+        let uses_ue4ss = |manifest: &Manifest| {
+            manifest
+                .files
+                .iter()
+                .any(|file| file.path.starts_with(&ue4ss_prefix))
+        };
         for (name, archive) in self.archives() {
             let manifest = &archive.manifest;
             let summary = mods.entry(name.clone()).or_insert_with(|| Summary {
@@ -63,6 +73,8 @@ impl Workspace {
                 tables: manifest.tables.clone(),
                 new_buildings: manifest.new_buildings.clone(),
                 cautions: manifest.cautions.clone(),
+                needs_ue4ss: uses_ue4ss(manifest),
+                changes_tables: !manifest.tables.is_empty(),
                 ..Summary::new(&name)
             });
             if summary.folder.is_some() {
@@ -104,6 +116,8 @@ impl Workspace {
             summary.cautions = manifest.cautions.clone();
             summary.tables = manifest.tables.clone();
             summary.new_buildings = manifest.new_buildings.clone();
+            summary.needs_ue4ss |= uses_ue4ss(manifest);
+            summary.changes_tables |= !manifest.tables.is_empty();
         }
         for (name, entry) in &record.mods {
             let summary = mods.entry(name.clone()).or_insert_with(|| Summary {
@@ -128,6 +142,8 @@ impl Workspace {
                 });
                 summary.tables = entry.tables.clone();
                 summary.new_buildings = entry.new_buildings.clone();
+                summary.needs_ue4ss |= entry.needs_ue4ss;
+                summary.changes_tables |= !entry.tables.is_empty();
             }
             if summary.hooks.is_empty() {
                 summary.hooks = entry.hooks.clone();
@@ -480,6 +496,10 @@ pub struct Summary {
     /// The game tables its edits change, and the buildings it adds (once installed).
     pub tables: Vec<String>,
     pub new_buildings: Vec<String>,
+    /// Whether it has Lua or C++ that UE4SS runs, and whether it changes the game's tables: known
+    /// before it's installed, from its folder or zip.
+    pub needs_ue4ss: bool,
+    pub changes_tables: bool,
     /// What couldn't be checked about it (an imported mod's: see [`crate::import`]).
     pub cautions: Vec<String>,
 }
