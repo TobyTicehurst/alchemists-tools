@@ -14,6 +14,7 @@ made: edit files, mod folders, installing. Then come here for the details of eac
 | Buildings: cost, heat use, name, description | Table edit (`DT_Buildings`) | Name confirmed | [buildings](examples/buildings.md) |
 | New buildings that reuse a game model | Table edit (`_copy`), plus a research | Confirmed | [buildings](examples/buildings.md) |
 | Items: stack size, units, fuel, prices | Table edit (`DT_Enemies`) | Units confirmed | [items and economy](examples/items-and-economy.md) |
+| What cauldrons make | Table edit (`DT_Enemies`: the cauldron values) | Not tried | [game mechanics](GAME-MECHANICS.md#cauldrons) |
 | Quests (all but the first), land, contracts, plants, loans, customers, equipment, recognitions | Table edit | Quests and plants confirmed | [items and economy](examples/items-and-economy.md), [fields](FIELDS.md) |
 | The start of a new game: first quest, starting values | Template-save edit (`save/DefaultGame.json`) | First quest confirmed | [saves](examples/saves.md) |
 | Behaviour while the game runs | Lua script (UE4SS) | Confirmed | [Lua](examples/lua.md) |

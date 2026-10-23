@@ -24,6 +24,16 @@ the mod logs each new bag, and on Ctrl + Numpad 1 lists what the newest one hold
 
 The tools need UE4SS anyway, for the game's `.usmap` (Ctrl + Numpad 6 in a new save).
 
+The game runs on Unreal Engine 5.7, which only UE4SS's experimental builds support. Build `v3.0.1-1181` (from
+the `experimental` release; `experimental-latest` replaces its files with each new build) is known to work.
+
+**With AF Mod Loader.** [AF Mod Loader](https://github.com/danipr25/af-modloader) is another way to run Lua mods. Its
+installer installs UE4SS 1181 with a loader for mods in `<game>/mods/`. It refuses to install over a UE4SS it
+didn't install, so install it first if you want both. Mods installed by `alchemists-tools` still work beside it.
+Its installer leaves out UE4SS's sample mods, `Keybinds` among them, so Ctrl + Numpad 6 and the other dump keys
+do nothing. To dump the `.usmap`, copy `Mods/Keybinds/` from the UE4SS zip into `ue4ss/Mods/` and put an empty
+`enabled.txt` in it (not tried).
+
 ## A mod's Lua files
 
 ```
@@ -248,3 +258,39 @@ Use Lua for what tables can't do.
 - **Keys:** UE4SS's own keys (its `Keybinds` mod) are Ctrl + Numpad 5 to 9, Ctrl + J and Ctrl + H, for
   its dumps; Ctrl + Numpad 7, for one, dumps every loaded actor to a file. Mods here use Ctrl + Numpad 1
   to 4: probes use 2 and 3, and the example uses 1.
+
+### Found by other mods
+
+These were found by danipr25 for the [AF Mod Loader](https://github.com/danipr25/af-modloader) mods (game 1.1.5023
+and 1.1.5024, UE4SS 1181, 2026-10-20 to 2026-10-23), and haven't been tried here.
+
+- **Never call `QueryEnemyConfig`** (on `BeltTDUserWidget`): it crashed the game. Read item rows from the table
+  instead (`Library.find_row("DT_Enemies", name)`, or `ForEachRow(function(name, row) ... end)` on the table).
+  The game state's `EnemyConfig` and `EnemyCraftingConfig` are `DT_Enemies` and `DT_EnemyCrafting`. An enum read
+  from a row comes back as a number (`SellType` `Liquid` is 6).
+- **The game's own answers.** On `/Game/Blueprints/Core/BP_BeltTDFunctionLib.Default__BP_BeltTDFunctionLib_C`:
+  - `GetItemDisplayName(FName(item), gameState, out)` puts the item's name, in the player's language, in
+    `out.DisplayName`;
+  - `GetEnemyIcon(FName(item), gameState, out)` puts its icon in `out.OutTexture`.
+
+  On the game state, `GetCauldronProduct({FName(a), FName(b)}, outTime, outHeat)` returns a cauldron's product,
+  with its time and heat in the out tables. It's fast: 28,900 calls took 284 ms.
+- **Cauldrons:** `BP_PewterCauldron_C` (the Cauldron) and `BP_SilverCauldron_C` (the Advanced Cauldron). On each one's
+  `CauldronFacility`, `FacilityContainer.Slots[i].SlotFilterName` is the filter on each slot, and
+  `CachedOutputName` is the product of the last recipe. Both stay set when the cauldron is idle and empty. A hook
+  on `/Script/BeltTD.CauldronFacilityComponent:NetCommandSetFilterName` fires when a player changes a slot's
+  filter: the context is the cauldron's component, and the parameters are the slot (from 0) and the new filter
+  (`None` when cleared).
+- **A mod's `main.lua` runs before there's a world**, and `RegisterInitGameStatePostHook` fires twice when a save
+  loads: once for the main menu, then once for the save. To know which world is loaded, read `WorldTitleName` on
+  `FindFirstOf("GameSaveLoadSubsystem")` when its `IsPreviewScene` is false. Another slot of the same world keeps
+  the title.
+- **Files:** UE4SS's Lua opens files with the system's ANSI calls, so `io.open` fails on a path with letters such as
+  `ñ`. `os.rename` onto a file that exists fails: remove the old file first.
+- **The game has no developer console.** A mod can turn on Unreal's (as UE4SS's `ConsoleEnablerMod` does) and add
+  commands with `RegisterConsoleCommandGlobalHandler`. That console also runs every engine command, some of which
+  crash the game.
+- **Menus:** [AF Mod Loader API](https://github.com/danipr25/af-modloader-api) adds tabs to the TAB and V menus,
+  sections to an item's sheet, buttons, item tiles and lists. Its notes (`docs/tab-menu.md`,
+  `docs/catalog-menu.md`, `docs/widgets.md`) say how the game builds those menus and which widget functions work
+  from Lua.

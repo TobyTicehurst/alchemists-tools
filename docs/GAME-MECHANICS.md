@@ -10,6 +10,7 @@ noted. Field names are as in `docs/FIELDS.md`.
 - [Time and sleep](#time-and-sleep)
 - [How machines read recipes](#how-machines-read-recipes)
 - [Unit items and recipe cycles](#unit-items-and-recipe-cycles)
+- [Cauldrons](#cauldrons)
 
 ## Daily quests
 
@@ -145,3 +146,51 @@ second = `HeatCost ÷ (HeatValue × units per item)`, adjusted by the `FuelEffic
 +25 %, it ran 1.5 times as fast but still made 12.5, so heat use followed the speed. A changed
 `HeatCost` shows in the tooltip, but a Kiln still used its old 15 a second. Steam has a heat value of 20, so a building heated by steam uses
 `HeatCost ÷ 20` steam per second.
+
+## Cauldrons
+
+A cauldron's product doesn't come from a recipe: it's worked out from three values of each item in `DT_Enemies`.
+So changing what cauldrons make is an edit to those values, and changing one item's value changes every
+combination it's in. These rules were found by danipr25 for the
+[Cauldron Recipes](https://github.com/danipr25/af-cauldron-recipes) mod
+([its notes](https://github.com/danipr25/af-cauldron-recipes/blob/main/docs/game-data.md)). They compared the rules
+with the game's own answer on every pair of ingredients in the Advanced Cauldron and on 6,000 sets of three in the
+Cauldron (game 1.1.5023, 2026-10-21). The examples below also come out right from the tables `extract` writes.
+Editing the values hasn't been tried.
+
+- **The values:**
+  - `CauldronCost`: what the item is worth as an ingredient. 170 items have one.
+  - `CauldronTarget`: the value that makes the item.
+  - `CauldronMulti`: above 0 for the 47 items a cauldron can make (the *targets*). In the Cauldron it multiplies
+    a target's distance from the value, so a larger one makes the target harder to get.
+- **What goes in:** an item with a `CauldronCost`, except liquids (`IsLiquid`), hidden items (`bHideInGame`) and
+  the five drinks whose `SellType` is `Liquid` (Whispering Fields, Strange Tide, Lavender Dream, World Tree Vintage,
+  Alchemist's Sigh), which are made where they're sold. That leaves 139 ingredients.
+- **The Cauldron** (`BP_PewterCauldron_C`, 3 slots): the value is the sum of the three costs, times 0.5 when all
+  three are the same item, or 0.65 when two are. The product is the target with the smallest
+  `|value − CauldronTarget| × CauldronMulti`, and it can be one of the ingredients.
+- **The Advanced Cauldron** (`BP_SilverCauldron_C`, 2 slots):
+  - **Two different items:** the value is the difference of their costs. The candidates are the targets whose
+    `CauldronTarget` is below the higher cost, apart from the ingredient with the higher cost (both, when the
+    costs are equal). The product is the candidate whose `CauldronTarget` is closest to the value; with no
+    candidate, it's the target with the lowest `CauldronTarget`.
+  - **The same item twice:** the target with the lowest `CauldronTarget` above the item's cost, or, if there's
+    none, the one with the highest.
+- **Ties** go to the target that comes first in the table. The order of the ingredients doesn't matter. The
+  rules matched 28,896 of the 28,900 Advanced pairs. The other 4 are Topaz with Perfumed Soap or its powder, a
+  near-exact tie the game breaks the other way.
+- **Examples:**
+  - Advanced Cauldron:
+    - Gentian Nectar (420) and Gentian (400): 20, which is Clay's target, so Clay.
+    - Flax Seeds (115) and Impure Copper Powder (150): 35. Impure Copper Powder is left out as the higher
+      cost, and Coke (30) and Coal (40) tie, so Coke, the first in the table. The web calculator (made for
+      game 1.0) breaks ties toward the higher target, so it says Coal.
+  - Cauldron: Gold, Copper and Silver Coins give `GoldDust5`.
+- **Time and heat:** the game works out the product, and how long it takes and the heat it needs, with
+  `GetCauldronProduct` on the game state (Gentian Nectar and Gentian: 3.6 s and 4.6 heat). How the time and heat
+  follow from the values hasn't been worked out.
+- **Rows in `DT_EnemyCrafting`:** four have the craft type `Cauldron`, the `_Alt` recipes for Ruby, Sapphire,
+  Emerald and the Philosopher's Stone. Each gives the same product as the rules above, so it isn't known whether
+  the cauldron reads them.
+- **Found recipes aren't recorded.** A save keeps no list of the cauldron combinations a player has found:
+  `CraftingOptionList` in its unlocks holds only machine recipes.

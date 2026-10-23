@@ -120,7 +120,7 @@ so it calls items "enemies"). Row names are item IDs (`WoodBoard` is Planks). Th
 | `QuestTier`, `ShoppingTier` | whole number | Tier for daily quests and the shop (0: from `ID`). An item is offered at tiers up to the player's level + 1 | Known |
 | `NpcShoppingBaseNum` | whole number | The most a customer buys of it at once | Known |
 | `BaseCost` | decimal | The value the wiki shows as "cost" | Unknown |
-| `CauldronCost`, `CauldronTarget`, `CauldronMulti` | decimal | Cauldron mechanics | Unknown |
+| `CauldronCost`, `CauldronTarget`, `CauldronMulti` | decimal | What cauldrons make: the item's worth as an ingredient, the value that makes it, and, above 0, that a cauldron can make it. Rules in `docs/GAME-MECHANICS.md`, "Cauldrons" | Known |
 | `BulkMeshThreshold`, `BulkMeshList` | lists | Models for piles of the item, by count | Known |
 | `DescRowName` | name | Another item whose description this one shows | Unknown |
 | `AllowPortalSupply` | true/false | Probably whether the portal can supply it | Unknown |

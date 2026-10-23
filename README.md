@@ -21,7 +21,8 @@ The tool needs a `.usmap` file describing the game's data layouts, dumped from t
 1. Install [UE4SS](https://docs.ue4ss.com/) into `AlchemyFactory/Binaries/Win64/`.
 2. Start a brand new save. Once it has loaded, press **Ctrl + Numpad 6**.
 
-The file appears in `Binaries/Win64/ue4ss/`, where the tool finds it.
+The file appears in `Binaries/Win64/ue4ss/`, where the tool finds it. If UE4SS came with AF Mod Loader, the key
+does nothing at first: see [docs/examples/lua.md](docs/examples/lua.md), "Setting up UE4SS".
 
 ## Extract the game's data
 
