@@ -74,7 +74,7 @@ const UE4SS_FILES: &[&str] = &[
     "mods.txt",
     "mods.json",
 ];
-/// The tool's own containers (see `mods.rs`), which no import may name.
+/// The tool's own containers (see [`crate::mods`]), which no import may name.
 const RESERVED_CONTAINERS: &[&str] = &["zzz_ModTables_P", "zzz_ModSave_P"];
 /// What in a Lua script reaches beyond the game, and what it does.
 const LUA_REACH: &[(&str, &str)] = &[
