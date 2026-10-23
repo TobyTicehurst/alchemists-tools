@@ -14,9 +14,24 @@ impl Workspace {
     /// step fails. `force` is as for `install` and `uninstall`: delete files changed since they were
     /// installed and those of mods without a manifest, and replace changed merged files.
     pub fn apply(&self, wanted: &[String], force: bool) -> Result<Applied> {
-        check_game_closed()?;
+        self.apply_or_check(wanted, force, false)
+    }
+
+    /// Do everything [`Self::apply`] does before it changes anything: build every mod, check them
+    /// as a set, and build the merge, so that the problems show without the game folder (or the
+    /// mods folders, or the saves) being touched. Returns what applying would do.
+    pub fn check(&self, wanted: &[String], force: bool) -> Result<Applied> {
+        self.apply_or_check(wanted, force, true)
+    }
+
+    fn apply_or_check(&self, wanted: &[String], force: bool, check_only: bool) -> Result<Applied> {
+        if !check_only {
+            check_game_closed()?;
+        } else if let Err(error) = check_game_closed() {
+            warning!("{error:#}");
+        }
         let files = GameFiles::new(&self.game.root)?;
-        if files.recover()? {
+        if !check_only && files.recover()? {
             warning!("a change to the game folder was interrupted last time; it has been undone");
         }
         let manifests = files.manifests()?;
@@ -226,6 +241,39 @@ impl Workspace {
         if !problems.is_empty() {
             return Err(fail("can't install these mods together", problems));
         }
+        let installing: Vec<String> = built
+            .iter()
+            .map(|(_, info)| info.name.clone())
+            .chain(
+                from_archives
+                    .iter()
+                    .map(|archive| archive.manifest.name.clone()),
+            )
+            .collect();
+        if check_only {
+            let mut planned = record.clone();
+            planned.mods = mods;
+            self.prepare_merge(&mut planned, force, &files)?.discard();
+            note!(
+                "\nchecked: applying would install {}, and uninstall {}; nothing was changed",
+                if installing.is_empty() {
+                    "none".to_string()
+                } else {
+                    installing.join(", ")
+                },
+                if removing.is_empty() {
+                    "none".to_string()
+                } else {
+                    removing.join(", ")
+                }
+            );
+            return Ok(Applied {
+                installed: installing,
+                uninstalled: removing,
+                load_order: planned.load_order,
+                saves_backup: None,
+            });
+        }
         // a mod no folder of mods holds is kept as a zip there before it's uninstalled
         for name in &removing {
             if self.local_folder(name).is_none() {
@@ -334,21 +382,12 @@ impl Workspace {
         self.save_record(&mut transaction, &mut record)?;
         transaction.commit()?;
 
-        let installed: Vec<String> = built
-            .iter()
-            .map(|(_, info)| info.name.clone())
-            .chain(
-                from_archives
-                    .iter()
-                    .map(|archive| archive.manifest.name.clone()),
-            )
-            .collect();
         note!(
             "\ninstalled {}; uninstalled {} (load order: {}); restart the game to load them",
-            if installed.is_empty() {
+            if installing.is_empty() {
                 "none".to_string()
             } else {
-                installed.join(", ")
+                installing.join(", ")
             },
             if removing.is_empty() {
                 "none".to_string()
@@ -378,7 +417,7 @@ impl Workspace {
             );
         }
         Ok(Applied {
-            installed,
+            installed: installing,
             uninstalled: removing,
             load_order: record.load_order,
             saves_backup,

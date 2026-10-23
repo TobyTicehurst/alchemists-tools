@@ -307,6 +307,18 @@ impl Workspace {
         force: bool,
         transaction: &mut Transaction,
     ) -> Result<()> {
+        let merged = self.prepare_merge(record, force, transaction.files())?;
+        self.write_merge(transaction, record, merged)
+    }
+
+    /// Check and build the merged files for the mods in `record`, in the build folder, without
+    /// touching the game folder; sets the record's load order.
+    pub(super) fn prepare_merge(
+        &self,
+        record: &mut Record,
+        force: bool,
+        files: &GameFiles,
+    ) -> Result<Merged> {
         let order = load_order(&record.mods)?;
         for name in &order {
             for caution in &record.mods[name].cautions {
@@ -334,7 +346,6 @@ impl Workspace {
             }
         }
         record.load_order = order.clone();
-        let files = transaction.files();
         let base = data_container(MERGED);
         let save_base = save_container(MERGED_SAVE);
         // every merged file is checked before any is touched, and both are built before either
@@ -371,6 +382,27 @@ impl Workspace {
                 written = Some(work);
             }
         }
+        Ok(Merged {
+            base,
+            save_base,
+            save_work,
+            written,
+        })
+    }
+
+    /// Put the merged files [`Self::prepare_merge`] built in place, in the transaction.
+    fn write_merge(
+        &self,
+        transaction: &mut Transaction,
+        record: &mut Record,
+        merged: Merged,
+    ) -> Result<()> {
+        let Merged {
+            base,
+            save_base,
+            save_work,
+            written,
+        } = merged;
         if self.replace_generated(transaction, record, &save_base, save_work.as_deref())?
             && save_work.is_none()
         {
@@ -406,5 +438,23 @@ impl Workspace {
         self.merge(&mut record, false, &mut transaction)?;
         self.save_record(&mut transaction, &mut record)?;
         transaction.commit()
+    }
+}
+
+/// The merged files, built in the build folder by [`Workspace::prepare_merge`]: the template
+/// save's work folder and the data container's, None where no mod edits that.
+pub(super) struct Merged {
+    base: String,
+    save_base: String,
+    save_work: Option<PathBuf>,
+    written: Option<PathBuf>,
+}
+
+impl Merged {
+    /// Remove what was built, unused (after a check).
+    pub(super) fn discard(self) {
+        for work in [self.save_work, self.written].into_iter().flatten() {
+            let _ = std::fs::remove_dir_all(work);
+        }
     }
 }

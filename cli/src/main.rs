@@ -248,6 +248,9 @@ enum ModAction {
         /// manifest; replace the tool's merged files even if they've changed since it wrote them
         #[arg(long)]
         force: bool,
+        /// Only check: build and check everything, and say what applying would do, changing nothing
+        #[arg(long)]
+        check: bool,
     },
     /// Remove a mod from the game: only the files its manifest lists, and only while they're as it
     /// installed them
@@ -392,6 +395,7 @@ fn mod_command(
             none: _,
             with_dependencies,
             force,
+            check,
         } => {
             let mut wanted: std::collections::BTreeSet<String> = names.iter().cloned().collect();
             if with_dependencies {
@@ -401,7 +405,11 @@ fn mod_command(
                 }
             }
             let wanted: Vec<String> = wanted.into_iter().collect();
-            workspace.apply(&wanted, force).map(|_| ())
+            if check {
+                workspace.check(&wanted, force).map(|_| ())
+            } else {
+                workspace.apply(&wanted, force).map(|_| ())
+            }
         }
         ModAction::Scan => workspace.scan(),
         ModAction::Uninstall { name, force } => workspace.uninstall(&name, force),

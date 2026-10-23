@@ -46,7 +46,8 @@ and click **Confirm**: it builds every ticked mod, checks them together, install
 It happens entirely or not at all. If a build fails, two mods clash (they add the same row, or detour the same game
 function), a required mod isn't ticked, or a file can't be replaced (the game is running), the game folder is left as
 it was. The reason is shown, and the mods it's about are marked ✖. After a successful install, mods that warned are
-marked ⚠.
+marked ⚠. **Check** does everything Confirm does before it changes anything (builds the mods, checks them together,
+builds the merged tables), so problems show without touching the game folder, the mods folders or your saves.
 
 Each mod is tagged if it needs UE4SS (in orange while UE4SS isn't installed) or changes the game's tables, so
 it's clear before ticking it. Clicking a mod shows its details: its picture (`thumbnail.png` in its folder), version, dependencies, the game build
@@ -91,6 +92,7 @@ The settings are shared with the command line, and everything the GUI does is a 
 |---|---|
 | The mod list | `alchemists-tools mod list` |
 | Confirm | `alchemists-tools mod apply <names>...` (the mods to have installed) |
+| Check | `alchemists-tools mod apply --check <names>...` |
 | Import a zip (a mod made without this tool) | `alchemists-tools mod import <zip>` |
 | Nexus Mods | `alchemists-tools mod browse [search]` |
 | Save mod list, Load mod list | `alchemists-tools mod export-list <file>`, `mod compare-list <file>` |

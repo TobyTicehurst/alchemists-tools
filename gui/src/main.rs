@@ -162,7 +162,7 @@ impl App {
         if self.running.is_some() {
             return;
         }
-        if matches!(job, Job::Apply { .. }) {
+        if matches!(job, Job::Apply { .. } | Job::Check { .. }) {
             self.marks.clear();
             self.outcome = None;
         }
@@ -264,8 +264,40 @@ impl App {
             }
             None => {}
         }
+        // a check changes nothing, so the ticks stay
+        let checking = done.checked.is_some();
+        match done.checked {
+            Some(Ok(planned)) => {
+                let mut parts = vec![];
+                if !planned.installed.is_empty() {
+                    parts.push(format!("install {}", planned.installed.join(", ")));
+                }
+                if !planned.uninstalled.is_empty() {
+                    parts.push(format!("uninstall {}", planned.uninstalled.join(", ")));
+                }
+                let warnings = self
+                    .log
+                    .iter()
+                    .filter(|message| message.level == Level::Warning)
+                    .count();
+                let mut text = format!(
+                    "Checked: nothing stops Confirm. It would {}. Nothing was changed.",
+                    if parts.is_empty() {
+                        "change nothing".to_string()
+                    } else {
+                        parts.join(", and ")
+                    }
+                );
+                if warnings > 0 {
+                    text += &format!(" {warnings} warning(s): the marked mods, and the log.");
+                }
+                self.outcome = Some(Outcome::Succeeded(text));
+            }
+            Some(Err(error)) => self.outcome = Some(Outcome::Failed(error)),
+            None => {}
+        }
         // after a failure the ticks stay, to fix and try again; otherwise they show what's there
-        if !failed {
+        if !failed && !checking {
             self.ticked = self
                 .overview
                 .installed()
@@ -605,6 +637,23 @@ impl App {
                         let context = ui.ctx().clone();
                         self.apply(&context);
                     }
+                }
+                let check = ui
+                    .add_enabled(
+                        idle && game,
+                        egui::Button::new("Check").min_size(Vec2::new(70.0, 28.0)),
+                    )
+                    .on_hover_text(
+                        "Build the ticked mods and check them together, as Confirm does, \
+                         without changing anything: problems show before you commit",
+                    );
+                if check.clicked() {
+                    let job = Job::Check {
+                        wanted: self.ticked.iter().cloned().collect(),
+                        force: self.force,
+                    };
+                    let context = ui.ctx().clone();
+                    self.start(&context, job);
                 }
                 let changed = !installing.is_empty() || !removing.is_empty();
                 if ui

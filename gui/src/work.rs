@@ -17,6 +17,8 @@ pub enum Job {
     Refresh,
     /// Make the installed mods exactly these (see `Workspace::apply`).
     Apply { wanted: Vec<String>, force: bool },
+    /// Check what applying these would do, changing nothing (see `Workspace::check`).
+    Check { wanted: Vec<String>, force: bool },
     /// Import a mod made without this tool (see `alchemists_core::import`).
     Import { zip: PathBuf },
     /// Install, remove, disable or enable UE4SS (see `alchemists_core::ue4ss`).
@@ -43,6 +45,8 @@ pub struct Done {
     pub applied: Option<Result<Applied, String>>,
     /// For the other jobs that change something: what was done, or why it failed.
     pub action: Option<Result<String, String>>,
+    /// For a check: what applying would do, or why it would fail.
+    pub checked: Option<Result<Applied, String>>,
     /// For comparing a list: what differs, or why it couldn't be compared.
     pub compared: Option<Result<Comparison, String>>,
     /// UE4SS in the game folder, if the game was found.
@@ -64,10 +68,11 @@ pub struct Running {
 
 impl Running {
     pub fn start(job: Job, settings: Settings, context: egui::Context) -> Self {
-        let applying = matches!(job, Job::Apply { .. });
+        let applying = matches!(job, Job::Apply { .. } | Job::Check { .. });
         let doing = match &job {
             Job::Refresh => "Reading the mods…",
             Job::Apply { .. } => "Building and installing…",
+            Job::Check { .. } => "Building and checking…",
             Job::Import { .. } => "Importing…",
             Job::ExportList { .. } => "Saving the mod list…",
             Job::CompareList { .. } => "Comparing the mod list…",
@@ -138,7 +143,7 @@ fn workspace(settings: &Settings) -> Workspace {
 fn run(job: Job, settings: &Settings) -> Done {
     let workspace = workspace(settings);
     let text = |error: anyhow::Error| format!("{error:#}");
-    let (mut applied, mut action, mut compared) = (None, None, None);
+    let (mut applied, mut action, mut compared, mut checked) = (None, None, None, None);
     match job {
         Job::Refresh => {}
         Job::Apply { wanted, force } => {
@@ -168,6 +173,13 @@ fn run(job: Job, settings: &Settings) -> Done {
                 }
             };
             action = Some(done.map_err(text));
+        }
+        Job::Check { wanted, force } => {
+            checked = Some(if !workspace.game.paks().is_dir() {
+                Err("the game wasn't found: set its folder in Setup".to_string())
+            } else {
+                workspace.check(&wanted, force).map_err(text)
+            })
         }
         Job::ExportList { path } => {
             action = Some(
@@ -212,6 +224,7 @@ fn run(job: Job, settings: &Settings) -> Done {
         applied,
         action,
         compared,
+        checked,
         ue4ss: workspace
             .game
             .paks()
