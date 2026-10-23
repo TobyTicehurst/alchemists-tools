@@ -1,13 +1,20 @@
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
+use alchemists_core::environment::{self, Status};
 use alchemists_core::game::{display_path, Game};
+use alchemists_core::settings::Settings;
 use alchemists_core::{datatable, edits, extract, json, package, unpack};
 use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
-#[command(version, about = "Tools for modding Alchemy Factory")]
+#[command(
+    version,
+    about = "Tools for modding Alchemy Factory",
+    after_help = "Options not given come from the settings (`alchemists-tools settings`), which \
+                  the GUI shares"
+)]
 struct Cli {
     /// Game install directory [default: found in your Steam libraries]
     #[arg(long, global = true)]
@@ -22,6 +29,27 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Find the game, UE4SS, the .usmap and the other things the tools use, and say what's missing
+    Check,
+    /// Show the saved settings, or change them: where the game, mods and builds are. The GUI uses
+    /// the same settings
+    Settings {
+        /// The folders of mod folders (repeat for several; the first gets new mods)
+        #[arg(long = "mods", value_name = "FOLDER")]
+        mods: Vec<PathBuf>,
+        /// Where builds go
+        #[arg(long)]
+        build: Option<PathBuf>,
+        /// The stub project's .uproject
+        #[arg(long)]
+        project: Option<PathBuf>,
+        /// The Unreal Engine install
+        #[arg(long)]
+        engine: Option<PathBuf>,
+        /// Forget every saved setting (the defaults apply again)
+        #[arg(long)]
+        reset: bool,
+    },
     /// Extract the game's data tables to JSON
     Extract {
         /// Output directory
@@ -62,12 +90,13 @@ enum Command {
     Mod {
         #[command(subcommand)]
         action: ModAction,
-        /// The folder of mod folders
-        #[arg(long, global = true, default_value = "mods")]
-        mods: PathBuf,
-        /// Where builds go
-        #[arg(long, global = true, default_value = "build")]
-        build: PathBuf,
+        /// A folder of mod folders; repeat for several (a mod in more than one is taken from the
+        /// first) [default: the settings', else mods]
+        #[arg(long = "mods", global = true, value_name = "FOLDER")]
+        mods: Vec<PathBuf>,
+        /// Where builds go [default: the settings', else build]
+        #[arg(long, global = true)]
+        build: Option<PathBuf>,
         /// The stub project's .uproject, for mods with cooked content
         /// [default: Documents/Unreal Projects/AlchemyFactory/AlchemyFactory.uproject]
         #[arg(long, global = true)]
@@ -79,19 +108,21 @@ enum Command {
         /// Where `extract` writes the game's data
         #[arg(long, default_value = "data")]
         data: PathBuf,
-        /// The folder of mod folders
-        #[arg(long, default_value = "mods")]
-        mods: PathBuf,
+        /// A folder of mod folders; repeat for several [default: the settings', else mods]
+        #[arg(long = "mods", value_name = "FOLDER")]
+        mods: Vec<PathBuf>,
         /// Where builds go (and the last update's record, in .update/)
-        #[arg(long, default_value = "build")]
-        build: PathBuf,
+        /// [default: the settings', else build]
+        #[arg(long)]
+        build: Option<PathBuf>,
         /// The stub project's .uproject
         /// [default: Documents/Unreal Projects/AlchemyFactory/AlchemyFactory.uproject]
         #[arg(long)]
         project: Option<PathBuf>,
         /// The Unreal Engine install, for rebuilding the stub project
-        #[arg(long, default_value = "C:/Program Files/Epic Games/UE_5.7")]
-        engine: PathBuf,
+        /// [default: the settings', else C:/Program Files/Epic Games/UE_5.7]
+        #[arg(long)]
+        engine: Option<PathBuf>,
         /// Don't rebuild the stub project's BeltTD module
         #[arg(long)]
         skip_stub: bool,
@@ -111,8 +142,9 @@ enum Command {
         #[arg(long)]
         project: Option<PathBuf>,
         /// The Unreal Engine install
-        #[arg(long, default_value = "C:/Program Files/Epic Games/UE_5.7")]
-        engine: PathBuf,
+        /// [default: the settings', else C:/Program Files/Epic Games/UE_5.7]
+        #[arg(long)]
+        engine: Option<PathBuf>,
         /// Set it up but don't build it
         #[arg(long)]
         no_build: bool,
@@ -137,9 +169,9 @@ enum Command {
         /// Overwrite an earlier probe of the same name
         #[arg(long)]
         force: bool,
-        /// The folder of mod folders
-        #[arg(long, default_value = "mods")]
-        mods: PathBuf,
+        /// The folder of mod folders [default: the settings' first, else mods]
+        #[arg(long)]
+        mods: Option<PathBuf>,
     },
     /// Apply a folder of edit files to the game's tables, as a mod container
     BuildTables {
@@ -171,6 +203,25 @@ enum ModAction {
         #[arg(long)]
         force: bool,
     },
+    /// Make the installed mods exactly those named, at once or not at all: build and install each
+    /// (again, if it's installed), and uninstall every other installed mod. Everything is built and
+    /// checked first: dependencies, incompatibilities, files, and clashes such as two mods
+    /// detouring one game function
+    Apply {
+        /// The mods to have installed
+        #[arg(required_unless_present = "none")]
+        names: Vec<String>,
+        /// Uninstall every mod
+        #[arg(long, conflicts_with = "names")]
+        none: bool,
+        /// Also install the mods these require, from the mods folders
+        #[arg(long)]
+        with_dependencies: bool,
+        /// Delete files changed since they were installed, and the files of mods without a
+        /// manifest; replace the tool's merged files even if they've changed since it wrote them
+        #[arg(long)]
+        force: bool,
+    },
     /// Remove a mod from the game: only the files its manifest lists, and only while they're as it
     /// installed them
     Uninstall {
@@ -183,35 +234,97 @@ enum ModAction {
     },
     /// Build a mod, then zip it for players: <build>/<name>_<version>.zip
     Dist { name: String },
-    /// The mods in the mods folder, and what is installed
+    /// The mods in the mods folders, what is installed, and what needs attention
     List,
     /// Every mod in the game folder, whether its files are as installed, and what else is there
     Scan,
 }
 
-fn default_project() -> PathBuf {
-    let home = std::env::var_os("USERPROFILE").unwrap_or_default();
-    PathBuf::from(home).join("Documents/Unreal Projects/AlchemyFactory/AlchemyFactory.uproject")
+/// Where things are: the command line's options, else the settings, else the defaults.
+struct Places {
+    settings: Settings,
+    game: Option<PathBuf>,
+    usmap: Option<PathBuf>,
+}
+
+impl Places {
+    fn game(&self) -> Result<Game> {
+        let game = match &self.game {
+            Some(path) => Game::new(path),
+            None => self.settings.game().context(
+                "couldn't find the game in your Steam libraries; pass --game, or save it with \
+                 `alchemists-tools settings --game <folder>`",
+            )?,
+        };
+        if !game.paks().is_dir() {
+            bail!(
+                "{} isn't the game folder: {} doesn't exist",
+                display_path(&game.root),
+                display_path(&game.paks())
+            );
+        }
+        Ok(game)
+    }
+
+    fn usmap(&self, game: &Game) -> Result<PathBuf> {
+        self.usmap
+            .clone()
+            .or_else(|| self.settings.usmap(Some(game)))
+            .context(
+                "no .usmap mappings found in the game's ue4ss folder; dump one with UE4SS (see \
+                 README) or pass --usmap",
+            )
+    }
+
+    /// For mod commands, which only need the .usmap to build: an empty path until then.
+    fn usmap_if_any(&self, game: &Game) -> PathBuf {
+        self.usmap(game).unwrap_or_default()
+    }
+
+    fn mods(&self, given: Vec<PathBuf>) -> Vec<PathBuf> {
+        if given.is_empty() {
+            self.settings.mods()
+        } else {
+            given
+        }
+    }
 }
 
 fn mod_command(
-    game: Game,
-    usmap: PathBuf,
+    places: &Places,
     action: ModAction,
-    mods: PathBuf,
-    build: PathBuf,
+    mods: Vec<PathBuf>,
+    build: Option<PathBuf>,
     project: Option<PathBuf>,
 ) -> Result<()> {
+    let game = places.game()?;
+    let usmap = places.usmap_if_any(&game);
     let workspace = alchemists_core::mods::Workspace::new(
-        mods,
-        build,
+        places.mods(mods),
+        build.unwrap_or_else(|| places.settings.build()),
         game,
         usmap,
-        project.unwrap_or_else(default_project),
+        project.unwrap_or_else(|| places.settings.project()),
     );
     match action {
         ModAction::New { name } => workspace.new_mod(&name),
         ModAction::List => workspace.list(),
+        ModAction::Apply {
+            names,
+            none: _,
+            with_dependencies,
+            force,
+        } => {
+            let mut wanted: std::collections::BTreeSet<String> = names.iter().cloned().collect();
+            if with_dependencies {
+                let overview = workspace.overview()?;
+                for name in &names {
+                    overview.tick(&mut wanted, name);
+                }
+            }
+            let wanted: Vec<String> = wanted.into_iter().collect();
+            workspace.apply(&wanted, force).map(|_| ())
+        }
         ModAction::Scan => workspace.scan(),
         ModAction::Uninstall { name, force } => workspace.uninstall(&name, force),
         ModAction::Build { name } => workspace.build_mod(&workspace.load(&name)?).map(|_| ()),
@@ -228,29 +341,126 @@ fn mod_command(
     }
 }
 
+fn check(places: &Places) -> Result<()> {
+    let mut settings = places.settings.clone();
+    settings.game = places.game.clone().or(settings.game);
+    settings.usmap = places.usmap.clone().or(settings.usmap);
+    let checks = environment::checks(&settings);
+    for check in &checks {
+        let mark = match check.status {
+            Status::Found => "ok",
+            Status::Warning => "WARNING",
+            Status::Missing => "MISSING",
+            Status::Optional => "-",
+        };
+        println!("{:<20} {mark:<8} {}", check.name, check.summary);
+        if let Some(path) = &check.path {
+            println!("{:<29} {}", "", display_path(path));
+        }
+        if matches!(check.status, Status::Missing | Status::Warning) {
+            println!("{:<29} {}", "", check.help);
+        }
+    }
+    match Settings::path() {
+        Some(path) if path.exists() => println!("\nsettings: {}", display_path(&path)),
+        _ => println!("\nno saved settings (alchemists-tools settings --help)"),
+    }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn settings_command(
+    places: &Places,
+    mods: Vec<PathBuf>,
+    build: Option<PathBuf>,
+    project: Option<PathBuf>,
+    engine: Option<PathBuf>,
+    reset: bool,
+) -> Result<()> {
+    let absolute = |path: PathBuf| std::path::absolute(&path).unwrap_or(path);
+    let mut settings = if reset {
+        Settings::default()
+    } else {
+        places.settings.clone()
+    };
+    let before = settings.clone();
+    if let Some(game) = &places.game {
+        settings.game = Some(absolute(game.clone()));
+    }
+    if let Some(usmap) = &places.usmap {
+        settings.usmap = Some(absolute(usmap.clone()));
+    }
+    if !mods.is_empty() {
+        settings.mods = mods.into_iter().map(absolute).collect();
+    }
+    settings.build = build.map(absolute).or(settings.build);
+    settings.project = project.map(absolute).or(settings.project);
+    settings.engine = engine.map(absolute).or(settings.engine);
+    if settings != before || reset {
+        settings.save()?;
+        println!("saved");
+    }
+    let shown = |path: &Option<PathBuf>, default: &str| match path {
+        Some(path) => display_path(path),
+        None => format!("({default})"),
+    };
+    println!(
+        "game:    {}",
+        shown(&settings.game, "found in the Steam libraries")
+    );
+    println!(
+        "usmap:   {}",
+        shown(&settings.usmap, "the newest in the game's ue4ss folder")
+    );
+    if settings.mods.is_empty() {
+        println!("mods:    (mods)");
+    }
+    for folder in &settings.mods {
+        println!("mods:    {}", display_path(folder));
+    }
+    println!("build:   {}", shown(&settings.build, "build"));
+    println!(
+        "project: {}",
+        shown(&settings.project, "Documents/Unreal Projects/...")
+    );
+    println!(
+        "engine:  {}",
+        shown(&settings.engine, alchemists_core::settings::DEFAULT_ENGINE)
+    );
+    if let Some(path) = Settings::path() {
+        println!("(in {})", display_path(&path));
+    }
+    Ok(())
+}
+
 fn main() -> Result<()> {
     let cli = Cli::parse();
-    let game = match cli.game {
-        Some(path) => Game::new(path),
-        None => {
-            Game::find().context("couldn't find the game in your Steam libraries; pass --game")?
-        }
-    };
-    if !game.paks().is_dir() {
-        bail!(
-            "{} isn't the game folder: {} doesn't exist",
-            display_path(&game.root),
-            display_path(&game.paks())
-        );
-    }
-    let usmap = match cli.usmap {
-        Some(path) => path,
-        None => game.find_usmap().context(
-            "no .usmap mappings found in the game's ue4ss folder; \
-             dump one with UE4SS (see README) or pass --usmap",
-        )?,
+    let places = Places {
+        settings: Settings::load()?,
+        game: cli.game,
+        usmap: cli.usmap,
     };
     match cli.command {
+        Command::Check => return check(&places),
+        Command::Settings {
+            mods,
+            build,
+            project,
+            engine,
+            reset,
+        } => return settings_command(&places, mods, build, project, engine, reset),
+        Command::Mod {
+            action,
+            mods,
+            build,
+            project,
+        } => return mod_command(&places, action, mods, build, project),
+        _ => {}
+    }
+    let game = places.game()?;
+    let usmap = places.usmap(&game)?;
+    match cli.command {
+        Command::Check | Command::Settings { .. } | Command::Mod { .. } => unreachable!(),
         Command::Extract { out } => {
             println!("game: {}", display_path(&game.root));
             println!("mappings: {}", display_path(&usmap));
@@ -276,12 +486,6 @@ fn main() -> Result<()> {
             allow_stale,
             &out,
         ),
-        Command::Mod {
-            action,
-            mods,
-            build,
-            project,
-        } => mod_command(game, usmap, action, mods, build, project),
         Command::Update {
             data,
             mods,
@@ -292,9 +496,16 @@ fn main() -> Result<()> {
             force,
             allow_old_dumps,
         } => {
-            let project = project.unwrap_or_else(default_project);
-            let workspace =
-                alchemists_core::mods::Workspace::new(mods, build, game, usmap, project);
+            let project = project.unwrap_or_else(|| places.settings.project());
+            let engine = engine.unwrap_or_else(|| places.settings.engine());
+            let build = build.unwrap_or_else(|| places.settings.build());
+            let workspace = alchemists_core::mods::Workspace::new(
+                places.mods(mods),
+                build,
+                game,
+                usmap,
+                project,
+            );
             let options = alchemists_core::update::Options {
                 data,
                 engine,
@@ -310,8 +521,8 @@ fn main() -> Result<()> {
             no_build,
         } => alchemists_core::stub::setup(
             &game,
-            &project.unwrap_or_else(default_project),
-            &engine,
+            &project.unwrap_or_else(|| places.settings.project()),
+            &engine.unwrap_or_else(|| places.settings.engine()),
             !no_build,
         ),
         Command::Probe {
@@ -324,6 +535,7 @@ fn main() -> Result<()> {
             mods,
         } => {
             let schemas = alchemists_core::usmap::read_usmap(&usmap)?;
+            let mods = mods.unwrap_or_else(|| places.settings.mods().remove(0));
             let probe = alchemists_core::probe::write_probe;
             probe(
                 &game,
@@ -475,14 +687,7 @@ fn package_content(
         })
         .collect();
     content::check_paths(&paths, allow_game_paths)?;
-    let project = match project {
-        Some(project) => project,
-        None => {
-            let home = std::env::var_os("USERPROFILE").context("no USERPROFILE; give --project")?;
-            PathBuf::from(home)
-                .join("Documents/Unreal Projects/AlchemyFactory/AlchemyFactory.uproject")
-        }
-    };
+    let project = project.unwrap_or_else(alchemists_core::settings::default_project);
     if !project.exists() {
         bail!(
             "{} doesn't exist; give the stub project with --project",

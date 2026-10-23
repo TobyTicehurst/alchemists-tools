@@ -3,7 +3,7 @@
 ## Building
 
 ```sh
-cargo build --release    # -> target/release/alchemists-tools
+cargo build --release    # -> target/release/alchemists-tools, and alchemists-gui
 cargo test
 cargo test --release -- --ignored   # also the tests that need the installed game (core/tests/)
 cargo clippy
@@ -21,7 +21,7 @@ retoc doesn't build against the latest jmap). Keep `Cargo.lock` committed, and i
 | `cli/`        | The `alchemists-tools` command                            |
 | `ue4ss/`      | Lua built into the program: the probe template and the AlchemistsLibrary mod |
 | `calculator/` | Production and demand calculations *(not yet ported)*     |
-| `gui/`        | Desktop interface *(not yet written)*                     |
+| `gui/`        | Desktop interface (egui): the mod list, Confirm (`mod apply`), Setup |
 
 In `core/src/`:
 
@@ -33,8 +33,10 @@ In `core/src/`:
 | `package` | Writing and checking IoStore containers |
 | `blueprint`, `content` | Reading cooked Blueprints; packaging cooked content |
 | `save` | Save files, and edits to the template save |
-| `mods` | Mod folders: build, install (merging), uninstall, zip, scan |
-| `files` | Manifests, and the checks before a file in the game folder is deleted or replaced |
+| `mods` | Mod folders: build, install (merging), uninstall, apply a set at once, zip, scan, the overview the list and GUI show |
+| `files` | Manifests, the checks before a file in the game folder is deleted or replaced, and transactions (all or nothing) |
+| `report` | Where messages go: printed, or collected by the GUI with the mods each is about |
+| `settings`, `environment` | The saved settings (shared by the command line and the GUI); finding the game, UE4SS and the rest |
 | `probe` | UE4SS probe mods |
 | `stub` | Setting up the stub Unreal project |
 | `update` | The steps after a game update |

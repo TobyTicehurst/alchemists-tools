@@ -9,6 +9,7 @@ Install [Rust](https://rustup.rs/), then:
 
 ```sh
 cargo install --locked --git https://github.com/TobyTicehurst/alchemists-tools alchemists-tools
+cargo install --locked --git https://github.com/TobyTicehurst/alchemists-tools alchemists-gui   # the desktop interface
 ```
 
 On first run, the tool downloads `oo2core_9_win64.dll` (the Oodle decompressor the game's
@@ -23,6 +24,30 @@ The tool needs a `.usmap` file describing the game's data layouts, dumped from t
 
 The file appears in `Binaries/Win64/ue4ss/`, where the tool finds it. If UE4SS came with AF Mod Loader, the key
 does nothing at first: see [docs/examples/lua.md](docs/examples/lua.md), "Setting up UE4SS".
+
+## Install mods with the GUI
+
+`alchemists-gui` lists the mods in your mods folders, like Factorio's mod list. Tick the mods you want installed
+and click **Confirm**: it builds every ticked mod, checks them together, installs them, and uninstalls the rest.
+It happens entirely or not at all. If a build fails, two mods clash (they add the same row, or detour the same game
+function), a required mod isn't ticked, or a file can't be replaced (the game is running), the game folder is left as
+it was. The reason is shown, and the mods it's about are marked ✖. After a successful install, mods that warned are
+marked ⚠.
+
+Clicking a mod shows its details: its picture (`thumbnail.png` in its folder), version, dependencies, the game build
+it's made for (marked when the game is newer), the tables it changes and the game functions it hooks. Ticking a mod
+ticks the mods it requires; unticking one unticks the mods that require it. Files installed by hand or by another
+tool are listed apart, since this tool can't remove them. Mods installed from a zip, or without a manifest, are
+marked, since they need care.
+
+**Setup** shows whether the game, UE4SS, the `.usmap` and the Unreal parts are found, and where the mods folders are.
+The settings are shared with the command line, and everything the GUI does is a command too:
+
+| GUI | Command |
+|---|---|
+| The mod list | `alchemists-tools mod list` |
+| Confirm | `alchemists-tools mod apply <names>...` (the mods to have installed) |
+| Setup | `alchemists-tools check`, `alchemists-tools settings` |
 
 ## Extract the game's data
 
@@ -89,6 +114,7 @@ a research on its predecessor's row, a new building nothing unlocks).
 alchemists-tools mod build MyMod                       # -> build/MyMod/, laid out like the game folder
 alchemists-tools mod install MyMod --with-dependencies
 alchemists-tools mod uninstall MyMod [--force]
+alchemists-tools mod apply MyMod OtherMod             # exactly these installed: all at once, or nothing changes
 alchemists-tools mod dist MyMod                        # -> build/MyMod_<version>.zip, and a README beside it
 alchemists-tools mod list
 alchemists-tools mod scan                              # every mod in the game folder, and its files
@@ -118,6 +144,8 @@ Other commands:
 
 | Command | What |
 |---|---|
+| `check` | Whether the game, UE4SS, the `.usmap` and the other things the tools use are found |
+| `settings` | Show or save where the game, mods folders and builds are (shared with the GUI) |
 | `build-tables <folder>` | One folder of edit files -> a data container |
 | `stub` | Set up the stub Unreal project for cooked content, from a blank C++ project, and build it |
 | `package-content /Game/Mods/MyMod` | Content cooked in a stub Unreal project -> a content container |
@@ -130,7 +158,10 @@ Other commands:
 |------------------|------------------------------------------------------------|
 | `--game <dir>`   | The game folder, if it isn't found in your Steam libraries |
 | `--usmap <file>` | A `.usmap` other than the newest in the `ue4ss` folder     |
+| `--mods <dir>`   | A folder of mod folders (default `mods`); repeat for several |
 | `--out <dir>`    | Where `extract` writes (default `data`)                    |
+
+Options not given come from the saved settings: `alchemists-tools settings --mods <dir> --mods <dir>` saves them once.
 
 Each command has `--help`.
 

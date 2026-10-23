@@ -11,6 +11,11 @@
 //!
 //! Folders are never deleted with their contents: only files, one by one, and then the folders they
 //! leave empty below `ue4ss/Mods/` (never `Mods` or `shared` themselves).
+//!
+//! Every change to the game folder is a [`Transaction`]: each file it replaces or deletes is first
+//! moved aside, with a journal written before each step, so a failure part way (a file the running
+//! game holds, a full disk) puts back exactly what was there. If the program itself is stopped part
+//! way, the next transaction (or [`GameFiles::recover`]) undoes the interrupted one first.
 
 use std::io::Read;
 use std::path::{Component, Path, PathBuf};
@@ -25,6 +30,10 @@ use crate::game::display_path;
 pub const MANIFESTS: &str = "AlchemyFactory/Content/Paks/~mods/manifests";
 /// Below this, folders a mod's files leave empty are removed (a UE4SS mod's own folder).
 const UE4SS_MODS: &str = "AlchemyFactory/Binaries/Win64/ue4ss/Mods";
+/// Where a transaction keeps the files it replaces, and its journal: outside `Paks`, so the game
+/// never loads a container kept there.
+const TRANSACTION: &str = "AlchemyFactory/.alchemists-transaction";
+const JOURNAL: &str = "journal.json";
 
 /// One file a mod (or the tool) put in the game folder.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -50,6 +59,9 @@ pub struct Manifest {
     /// The game tables its edits change.
     pub tables: Vec<String>,
     pub new_buildings: Vec<String>,
+    /// The game functions its C++ code detours, and those it hooks through UE4SS.
+    pub detours: Vec<String>,
+    pub hooks: Vec<String>,
     pub files: Vec<FileRecord>,
 }
 
@@ -162,41 +174,73 @@ impl GameFiles {
         })
     }
 
-    /// Delete listed files. Unchanged ones go; changed ones stay unless `force`; missing ones are
-    /// reported. Then the folders this emptied below `ue4ss/Mods/` are removed.
-    pub fn delete_listed(&self, files: &[FileRecord], force: bool) -> Result<Deleted> {
-        let mut out = Deleted::default();
-        for file in files {
-            let full = self.resolve(&file.path)?;
-            match self.state(file)? {
-                State::Missing => out.missing.push(file.path.clone()),
-                State::Changed if !force => out.kept.push(file.path.clone()),
-                State::Changed if !full.is_file() => out.kept.push(file.path.clone()),
-                _ => {
-                    std::fs::remove_file(&full)
-                        .with_context(|| format!("deleting {}", display_path(&full)))?;
-                    out.deleted.push(file.path.clone());
-                }
-            }
+    /// Start a change to the game folder, first undoing one that was interrupted.
+    pub fn begin(&self) -> Result<Transaction<'_>> {
+        if self.recover()? {
+            crate::report::warning!(
+                "a change to the game folder was interrupted last time; it has been undone"
+            );
         }
-        self.remove_empty_folders(&out.deleted);
-        Ok(out)
+        let folder = self.root.join(TRANSACTION);
+        std::fs::create_dir_all(&folder)
+            .with_context(|| format!("making {}", display_path(&folder)))?;
+        let transaction = Transaction {
+            files: self,
+            folder,
+            journal: Journal::default(),
+            deleted: vec![],
+            finished: false,
+        };
+        transaction.save_journal()?;
+        Ok(transaction)
     }
 
-    /// Delete files that aren't in any manifest (an uninstall the user forced). Each must still be
-    /// a safe path and a file; folders are only removed when left empty.
-    pub fn delete_unlisted(&self, relative: &[String]) -> Result<Vec<String>> {
-        let mut deleted = vec![];
-        for path in relative {
-            let full = self.resolve(path)?;
-            if full.is_file() {
-                std::fs::remove_file(&full)
-                    .with_context(|| format!("deleting {}", display_path(&full)))?;
-                deleted.push(path.clone());
+    /// Undo a transaction that was interrupted (the program stopped part way), if there is one;
+    /// returns whether there was.
+    pub fn recover(&self) -> Result<bool> {
+        let folder = self.root.join(TRANSACTION);
+        let journal_path = folder.join(JOURNAL);
+        if !journal_path.exists() {
+            // a transaction stopped after its journal was removed had finished: only the files it
+            // replaced are left
+            if folder.exists() {
+                std::fs::remove_dir_all(&folder)
+                    .with_context(|| format!("removing {}", display_path(&folder)))?;
+            }
+            return Ok(false);
+        }
+        let text = std::fs::read_to_string(&journal_path)?;
+        let journal: Journal = serde_json::from_str(&text)
+            .with_context(|| format!("reading {}", display_path(&journal_path)))?;
+        self.undo(&folder, &journal)?;
+        std::fs::remove_dir_all(&folder)
+            .with_context(|| format!("removing {}", display_path(&folder)))?;
+        Ok(true)
+    }
+
+    /// Put back what a transaction changed, last change first. Safe to repeat: a file is only put
+    /// back while its kept copy exists, and only a file the transaction made is deleted.
+    fn undo(&self, folder: &Path, journal: &Journal) -> Result<()> {
+        for (index, change) in journal.changes.iter().enumerate().rev() {
+            let full = self.resolve(&change.path)?;
+            let kept = folder.join(index.to_string());
+            if change.existed {
+                if kept.exists() {
+                    if full.is_file() {
+                        std::fs::remove_file(&full)
+                            .with_context(|| format!("removing {}", change.path))?;
+                    }
+                    if let Some(parent) = full.parent() {
+                        std::fs::create_dir_all(parent)?;
+                    }
+                    std::fs::rename(&kept, &full)
+                        .with_context(|| format!("putting back {}", change.path))?;
+                }
+            } else if full.is_file() {
+                std::fs::remove_file(&full).with_context(|| format!("removing {}", change.path))?;
             }
         }
-        self.remove_empty_folders(&deleted);
-        Ok(deleted)
+        Ok(())
     }
 
     /// Remove the folders that deleting `files` left empty, below `ue4ss/Mods/<mod>/` (or
@@ -259,13 +303,181 @@ impl GameFiles {
     }
 }
 
-/// What [`GameFiles::delete_listed`] did.
+/// What [`Transaction::delete_listed`] did.
 #[derive(Default, Debug)]
 pub struct Deleted {
     pub deleted: Vec<String>,
     /// Changed since they were installed, so left in place.
     pub kept: Vec<String>,
     pub missing: Vec<String>,
+}
+
+/// The files a transaction has touched, in order, written before each is touched.
+#[derive(Default, Serialize, Deserialize)]
+struct Journal {
+    changes: Vec<Change>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct Change {
+    path: String,
+    /// Whether there was a file there, which the transaction moved aside (to `<index>` in its
+    /// folder) before touching it.
+    existed: bool,
+}
+
+/// A change to the game folder that happens entirely or not at all (see the module's comment).
+/// Dropped without [`Transaction::commit`], as when an error returns early, it undoes itself.
+pub struct Transaction<'a> {
+    files: &'a GameFiles,
+    folder: PathBuf,
+    journal: Journal,
+    deleted: Vec<String>,
+    finished: bool,
+}
+
+impl<'a> Transaction<'a> {
+    /// The game folder it changes.
+    pub fn files(&self) -> &'a GameFiles {
+        self.files
+    }
+
+    fn save_journal(&self) -> Result<()> {
+        let path = self.folder.join(JOURNAL);
+        std::fs::write(&path, serde_json::to_string_pretty(&self.journal)?)
+            .with_context(|| format!("writing {}", display_path(&path)))
+    }
+
+    /// Before a file is replaced or deleted: journal it, then move what's there aside (once per
+    /// file). Returns its full path.
+    fn keep(&mut self, relative: &str) -> Result<PathBuf> {
+        let full = self.files.resolve(relative)?;
+        if self
+            .journal
+            .changes
+            .iter()
+            .any(|change| change.path == relative)
+        {
+            return Ok(full);
+        }
+        if full.exists() && !full.is_file() {
+            bail!("{relative} is a folder, not a file");
+        }
+        let existed = full.exists();
+        let index = self.journal.changes.len();
+        self.journal.changes.push(Change {
+            path: relative.to_string(),
+            existed,
+        });
+        // journaled first, so an interruption between the two can still be undone
+        self.save_journal()?;
+        if existed {
+            std::fs::rename(&full, self.folder.join(index.to_string())).with_context(|| {
+                format!("moving {relative} aside to replace it (is the game running?)")
+            })?;
+        }
+        Ok(full)
+    }
+
+    /// Put a copy of `source` at `relative`, replacing what's there.
+    pub fn copy(&mut self, source: &Path, relative: &str) -> Result<()> {
+        let full = self.keep(relative)?;
+        if let Some(parent) = full.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::copy(source, &full).with_context(|| format!("installing {relative}"))?;
+        Ok(())
+    }
+
+    /// Write `contents` to `relative`, replacing what's there.
+    pub fn write(&mut self, relative: &str, contents: &[u8]) -> Result<()> {
+        let full = self.keep(relative)?;
+        if let Some(parent) = full.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(&full, contents).with_context(|| format!("writing {relative}"))
+    }
+
+    /// Delete the file `relative`, if there is one; returns whether there was.
+    pub fn delete(&mut self, relative: &str) -> Result<bool> {
+        if !self.files.resolve(relative)?.is_file() {
+            return Ok(false);
+        }
+        // moving it aside deletes it
+        self.keep(relative)?;
+        self.deleted.push(relative.to_string());
+        Ok(true)
+    }
+
+    /// Delete listed files. Unchanged ones go; changed ones stay unless `force`; missing ones are
+    /// reported.
+    pub fn delete_listed(&mut self, files: &[FileRecord], force: bool) -> Result<Deleted> {
+        let mut out = Deleted::default();
+        for file in files {
+            let full = self.files.resolve(&file.path)?;
+            match self.files.state(file)? {
+                State::Missing => out.missing.push(file.path.clone()),
+                State::Changed if !force => out.kept.push(file.path.clone()),
+                State::Changed if !full.is_file() => out.kept.push(file.path.clone()),
+                _ => {
+                    self.delete(&file.path)?;
+                    out.deleted.push(file.path.clone());
+                }
+            }
+        }
+        Ok(out)
+    }
+
+    /// Delete files that aren't in any manifest (an uninstall the user forced). Each must still be
+    /// a safe path and a file.
+    pub fn delete_unlisted(&mut self, relative: &[String]) -> Result<Vec<String>> {
+        let mut deleted = vec![];
+        for path in relative {
+            if self.delete(path)? {
+                deleted.push(path.clone());
+            }
+        }
+        Ok(deleted)
+    }
+
+    /// Keep every change: drop the journal (from then on there's nothing to undo), the files moved
+    /// aside, and the folders the deletions left empty below `ue4ss/Mods/`.
+    pub fn commit(mut self) -> Result<()> {
+        self.finished = true;
+        std::fs::remove_file(self.folder.join(JOURNAL))
+            .with_context(|| format!("removing {}", display_path(&self.folder.join(JOURNAL))))?;
+        let _ = std::fs::remove_dir_all(&self.folder);
+        self.files.remove_empty_folders(&self.deleted);
+        Ok(())
+    }
+
+    /// Undo every change.
+    pub fn roll_back(mut self) -> Result<()> {
+        self.finished = true;
+        self.files.undo(&self.folder, &self.journal)?;
+        std::fs::remove_dir_all(&self.folder)
+            .with_context(|| format!("removing {}", display_path(&self.folder)))
+    }
+}
+
+impl Drop for Transaction<'_> {
+    fn drop(&mut self) {
+        if self.finished {
+            return;
+        }
+        let undone = self
+            .files
+            .undo(&self.folder, &self.journal)
+            .and_then(|_| Ok(std::fs::remove_dir_all(&self.folder)?));
+        match undone {
+            Ok(()) => crate::report::note!("the game folder is as it was: nothing was changed"),
+            // the journal stays, so the next transaction tries again
+            Err(error) => crate::report::warning!(
+                "couldn't undo every change to the game folder ({error:#}); the next install or \
+                 uninstall tries again"
+            ),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -319,7 +531,9 @@ mod tests {
             "mine",
         )
         .unwrap();
-        let deleted = files.delete_listed(&listed, false).unwrap();
+        let mut transaction = files.begin().unwrap();
+        let deleted = transaction.delete_listed(&listed, false).unwrap();
+        transaction.commit().unwrap();
         assert_eq!(deleted.deleted, [script]);
         assert_eq!(deleted.kept, [pak]);
         assert!(root.join(pak).exists(), "a changed file was deleted");
@@ -333,8 +547,59 @@ mod tests {
         assert!(root
             .join("AlchemyFactory/Binaries/Win64/ue4ss/Mods")
             .exists());
-        let forced = files.delete_listed(&listed, true).unwrap();
+        let mut transaction = files.begin().unwrap();
+        let forced = transaction.delete_listed(&listed, true).unwrap();
+        transaction.commit().unwrap();
         assert_eq!(forced.deleted, [pak]);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn a_failed_transaction_changes_nothing() {
+        let (root, files) = game("roll-back");
+        let pak = "AlchemyFactory/Content/Paks/~mods/zzz_Old_P.pak";
+        let script = "AlchemyFactory/Binaries/Win64/ue4ss/Mods/Probe/Scripts/main.lua";
+        let new = "AlchemyFactory/Content/Paks/~mods/zzz_New_P.pak";
+        std::fs::write(root.join(pak), "old").unwrap();
+        std::fs::write(root.join(script), "print(1)").unwrap();
+        let source = root.join("source.pak");
+        std::fs::write(&source, "new").unwrap();
+        {
+            let mut transaction = files.begin().unwrap();
+            transaction.copy(&source, pak).unwrap();
+            transaction.copy(&source, new).unwrap();
+            transaction.delete(script).unwrap();
+            // dropped without commit, as on an error
+        }
+        assert_eq!(std::fs::read_to_string(root.join(pak)).unwrap(), "old");
+        assert_eq!(
+            std::fs::read_to_string(root.join(script)).unwrap(),
+            "print(1)"
+        );
+        assert!(!root.join(new).exists());
+        assert!(!root.join(TRANSACTION).exists());
+
+        let mut transaction = files.begin().unwrap();
+        transaction.copy(&source, pak).unwrap();
+        transaction.commit().unwrap();
+        assert_eq!(std::fs::read_to_string(root.join(pak)).unwrap(), "new");
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn an_interrupted_transaction_is_undone_next_time() {
+        let (root, files) = game("recover");
+        let pak = "AlchemyFactory/Content/Paks/~mods/zzz_Old_P.pak";
+        std::fs::write(root.join(pak), "old").unwrap();
+        let source = root.join("source.pak");
+        std::fs::write(&source, "new").unwrap();
+        let mut transaction = files.begin().unwrap();
+        transaction.copy(&source, pak).unwrap();
+        std::mem::forget(transaction); // the program stopped here
+        assert_eq!(std::fs::read_to_string(root.join(pak)).unwrap(), "new");
+        assert!(files.recover().unwrap());
+        assert_eq!(std::fs::read_to_string(root.join(pak)).unwrap(), "old");
+        assert!(!files.recover().unwrap());
         let _ = std::fs::remove_dir_all(root);
     }
 }

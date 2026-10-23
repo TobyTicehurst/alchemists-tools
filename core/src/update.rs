@@ -338,13 +338,9 @@ fn copied_blueprints(workspace: &Workspace, data: &Path) -> BTreeMap<String, Vec
         .remove("DT_Buildings")
         .unwrap_or_default();
     let mut out: BTreeMap<String, Vec<String>> = BTreeMap::new();
-    for entry in std::fs::read_dir(&workspace.mods)
-        .into_iter()
-        .flatten()
-        .flatten()
-    {
-        let mod_name = entry.file_name().to_string_lossy().into_owned();
-        for file in files_below(&entry.path().join("edits"), Some("json")) {
+    for folder in workspace.mod_folders() {
+        let mod_name = folder.file_name().unwrap().to_string_lossy().into_owned();
+        for file in files_below(&folder.join("edits"), Some("json")) {
             let Some(rows) = std::fs::read_to_string(&file)
                 .ok()
                 .and_then(|text| serde_json::from_str::<Value>(&text).ok())
@@ -537,15 +533,7 @@ pub fn update(workspace: &Workspace, options: &Options) -> Result<()> {
 
     println!("\n== 5. mods");
     let mut failed = vec![];
-    let mut folders: Vec<PathBuf> = std::fs::read_dir(&workspace.mods)
-        .into_iter()
-        .flatten()
-        .flatten()
-        .map(|e| e.path())
-        .filter(|p| p.join("mod.json").exists())
-        .collect();
-    folders.sort();
-    for folder in folders {
+    for folder in workspace.mod_folders() {
         let name = folder.file_name().unwrap().to_string_lossy().into_owned();
         match crate::mods::Mod::load(&folder).and_then(|found| workspace.build_mod(&found)) {
             Ok(_) => {}

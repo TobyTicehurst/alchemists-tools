@@ -175,6 +175,7 @@ released. The install, the uninstall and the README `dist` writes all warn about
 ```
 mods/MyMod/
   mod.json                 name, version, dependencies, cooked content, craft types
+  thumbnail.png            its picture in the GUI (or .jpg; any size, shown square)
   edits/*.json             table edits
   edits/if-Other/*.json    table edits applied only when the mod Other is installed too
   save/DefaultGame.json    edits to the save new games start from
@@ -193,6 +194,7 @@ mods/MyMod/
   "author": "",
   "homepage": "",
   "dependencies": ["AlchemistsLibrary >= 0.2.4", "? BiggerChests", "! OtherStorageMod"],
+  "game-build": "25991404",
   "content": ["/Game/Mods/MyMachine"],
   "new-craft-types": ["Sorting"],
   "craft-types": {"BP_MyMachine": "MyMachine:Sorting"}
@@ -217,6 +219,14 @@ Only `name` is needed. Like Factorio's `info.json`:
   | `!` | incompatible: neither installs while the other is installed |
 
 The fields this tool adds:
+- **`game-build`**: the game's Steam build the mod is made for (`alchemists-tools check` shows the installed one;
+  `mod new` fills it in). When the game is newer, building warns, and the GUI and `mod list` mark the mod, as
+  it may need updating. Once it's checked against the new build, change the number.
+- **`detours`**: the game functions the mod's C++ code detours (replaces the start of), by their reflected
+  paths, such as `"/Script/BeltTD.BeltTDInventoryComponent:CheckCanCost"`. Two mods can't both detour one
+  function, so installing them together stops. `[]` says there are none. Without the field, a build whose
+  `dlls/main.dll` names game functions warns. Functions hooked through UE4SS (Lua's `RegisterHook`, or named in
+  the DLL) are found by the build; two unrelated mods hooking one game function is a warning.
 - **`content`**: folders or assets cooked in the stub project. They must be in `/Game/Mods/<name>/`, so no
   two mods share asset paths, and they're packaged as `zzz_<name>Content_P`.
 - **`new-craft-types`**: recipe lists of the mod's own, past the game's named craft types. Edits and
@@ -259,9 +269,25 @@ It warns about likely mistakes, judged from the game's own data:
 ```
 alchemists-tools mod install MyMod [--with-dependencies] [--force]   # build, then install (and the mods it requires)
 alchemists-tools mod uninstall MyMod [--force]
+alchemists-tools mod apply MyMod Other [--with-dependencies] [--force]  # exactly these installed, all at once
 alchemists-tools mod list                                    # mods, what's installed, and the load order
 alchemists-tools mod scan                                    # every mod in the game folder, and its files
 ```
+
+**Applying a set of mods.** `mod apply` (the GUI's Confirm button) makes the installed mods exactly the ones
+named. Each is built and installed (again, if it's installed already), and every other installed mod is
+uninstalled. Everything is built and checked before the game folder is touched: each build, the mods'
+dependencies and incompatibilities as a set, the files each writes, and the merge (rows two mods add, functions
+two mods detour). Any problem stops it with nothing changed, naming the mods it's about.
+
+**All or nothing.** `apply`, `install` and `uninstall` change the game folder in one transaction. Each file is
+moved aside before it's replaced or deleted (to `AlchemyFactory/.alchemists-transaction/`, where the game doesn't
+look), with a journal written before each step. If a step fails, say because the running game holds a file,
+everything is put back. If the tool itself is stopped part way, the next install or uninstall puts it back first.
+They refuse to start while the game is running.
+
+**Several folders of mods.** `--mods` can be given more than once (and saved with `alchemists-tools settings
+--mods <folder> --mods <folder>`). A mod in more than one folder is taken from the first.
 
 **Several mods together.** The game reads each table whole from the last container that has it. So
 installing and uninstalling merge the table edits of every installed mod into one container,
@@ -369,7 +395,8 @@ More rules, learned in game, are in `docs/examples/lua.md` ("Rules").
 Lua can hook only what the game calls through the reflection system (Blueprints and the user interface). The
 game's own C++ (building, charging costs, refunds, stack limits) calls itself directly, so changing that needs a
 UE4SS C++ mod: a DLL that detours the game's native code. Put the built DLL at `ue4ss/dlls/main.dll` in the mod
-folder; the tool installs it as it does a Lua mod, with the mod's table edits beside it.
+folder; the tool installs it as it does a Lua mod, with the mod's table edits beside it. List the functions it
+detours in mod.json's `"detours"`, so that a second mod detouring one of them can't be installed beside it.
 
 Building one:
 - it must be compiled against the source of the exact UE4SS build installed (the "Git SHA" on the second line
