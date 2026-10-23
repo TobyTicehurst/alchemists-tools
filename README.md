@@ -69,6 +69,11 @@ when it was made (in UTC). To go back, close the game and copy a backup's folder
 changes, so the GUI says to Confirm again (which installs them against the new game). If the game then crashes at
 start, UE4SS or a mod's C++ isn't ready for the new build: the GUI offers to disable UE4SS until they're updated.
 
+**Playing together:** everyone in a multiplayer game needs the same mods. **Save mod list** writes your installed
+mods (names, versions, and checksums of what each installed) to a file to send the others; **Load mod list** compares
+one with your mods, ticks the list's mods that you have, and says what differs: mods to download, other versions,
+different builds, mods it doesn't have. Confirm then installs exactly those.
+
 **Nexus Mods** lists the game's mods on [Nexus Mods](https://www.nexusmods.com/games/alchemyfactory/mods), with
 their pictures, summaries and files, marking those already in your mods folders. To install one, download its zip
 from its page and import it. A mod whose homepage is its Nexus page is marked in the Mods view when Nexus has a
@@ -88,6 +93,7 @@ The settings are shared with the command line, and everything the GUI does is a 
 | Confirm | `alchemists-tools mod apply <names>...` (the mods to have installed) |
 | Import a zip (a mod made without this tool) | `alchemists-tools mod import <zip>` |
 | Nexus Mods | `alchemists-tools mod browse [search]` |
+| Save mod list, Load mod list | `alchemists-tools mod export-list <file>`, `mod compare-list <file>` |
 | Setup | `alchemists-tools check`, `alchemists-tools settings` |
 | Setup's UE4SS buttons | `alchemists-tools ue4ss install`, `remove`, `disable`, `enable` |
 

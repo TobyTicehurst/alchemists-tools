@@ -288,6 +288,17 @@ enum ModAction {
     },
     /// The mods in the mods folders, what is installed, and what needs attention
     List,
+    /// Write the installed mods (names, versions, checksums of their files) as a list, for the
+    /// players you play with: everyone in a multiplayer game needs the same mods
+    ExportList {
+        /// The list's file, e.g. mod-list.json
+        file: PathBuf,
+    },
+    /// Compare a list from mod export-list with the mods here, and say what differs
+    CompareList {
+        /// The list's file
+        file: PathBuf,
+    },
     /// The game's mods on Nexus Mods, most endorsed first, and which are in the mods folders
     Browse {
         /// Only those whose name or summary has this in it
@@ -367,6 +378,8 @@ fn mod_command(
         ModAction::New { name } => workspace.new_mod(&name),
         ModAction::List => workspace.list(),
         ModAction::Browse { search } => workspace.browse(search.as_deref()),
+        ModAction::ExportList { file } => workspace.export_list(&file).map(|_| ()),
+        ModAction::CompareList { file } => workspace.compare_list_file(&file),
         ModAction::Add { url, branch } => {
             workspace.add_from_git(&url, branch.as_deref()).map(|_| ())
         }

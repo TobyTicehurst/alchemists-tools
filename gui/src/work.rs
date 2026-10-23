@@ -5,8 +5,8 @@ use std::path::PathBuf;
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 
 use alchemists_core::environment::{self, Check};
-use alchemists_core::game::Game;
-use alchemists_core::mods::{Applied, Overview, Workspace};
+use alchemists_core::game::{display_path, Game};
+use alchemists_core::mods::{Applied, Comparison, ModList, Overview, Workspace};
 use alchemists_core::report::{self, Message};
 use alchemists_core::settings::Settings;
 use alchemists_core::ue4ss;
@@ -21,6 +21,10 @@ pub enum Job {
     Import { zip: PathBuf },
     /// Install, remove, disable or enable UE4SS (see `alchemists_core::ue4ss`).
     Ue4ss(Ue4ssAction),
+    /// Write the installed mods as a list for other players (see `alchemists_core::mods::ModList`).
+    ExportList { path: PathBuf },
+    /// Compare a list from another player with the mods here.
+    CompareList { path: PathBuf },
 }
 
 #[derive(Clone, Copy)]
@@ -39,6 +43,8 @@ pub struct Done {
     pub applied: Option<Result<Applied, String>>,
     /// For the other jobs that change something: what was done, or why it failed.
     pub action: Option<Result<String, String>>,
+    /// For comparing a list: what differs, or why it couldn't be compared.
+    pub compared: Option<Result<Comparison, String>>,
     /// UE4SS in the game folder, if the game was found.
     pub ue4ss: Option<ue4ss::Installed>,
 }
@@ -63,6 +69,8 @@ impl Running {
             Job::Refresh => "Reading the mods…",
             Job::Apply { .. } => "Building and installing…",
             Job::Import { .. } => "Importing…",
+            Job::ExportList { .. } => "Saving the mod list…",
+            Job::CompareList { .. } => "Comparing the mod list…",
             Job::Ue4ss(Ue4ssAction::Install) => "Installing UE4SS…",
             Job::Ue4ss(_) => "Changing UE4SS…",
         };
@@ -130,7 +138,7 @@ fn workspace(settings: &Settings) -> Workspace {
 fn run(job: Job, settings: &Settings) -> Done {
     let workspace = workspace(settings);
     let text = |error: anyhow::Error| format!("{error:#}");
-    let (mut applied, mut action) = (None, None);
+    let (mut applied, mut action, mut compared) = (None, None, None);
     match job {
         Job::Refresh => {}
         Job::Apply { wanted, force } => {
@@ -161,6 +169,28 @@ fn run(job: Job, settings: &Settings) -> Done {
             };
             action = Some(done.map_err(text));
         }
+        Job::ExportList { path } => {
+            action = Some(
+                workspace
+                    .export_list(&path)
+                    .map(|list| {
+                        format!(
+                            "Saved the list of the {} installed mods to {}. Send it to the players \
+                             you play with: they load it to see what differs.",
+                            list.mods.len(),
+                            display_path(&path)
+                        )
+                    })
+                    .map_err(text),
+            );
+        }
+        Job::CompareList { path } => {
+            compared = Some(
+                ModList::read(&path)
+                    .and_then(|list| workspace.compare_list(&list))
+                    .map_err(text),
+            );
+        }
         Job::Import { zip } => {
             action = Some(
                 workspace
@@ -181,6 +211,7 @@ fn run(job: Job, settings: &Settings) -> Done {
         checks: environment::player_checks(settings),
         applied,
         action,
+        compared,
         ue4ss: workspace
             .game
             .paks()

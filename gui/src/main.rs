@@ -272,6 +272,24 @@ impl App {
                 .map(|summary| summary.name.clone())
                 .collect();
         }
+        // a list from another player: tick its mods, and say what differs
+        match done.compared {
+            Some(Ok(comparison)) => {
+                self.ticked = comparison.wanted.into_iter().collect();
+                let text = if comparison.differences.is_empty() {
+                    "The installed mods match the list.".to_string()
+                } else {
+                    format!(
+                        "The list's mods that are here are ticked: Confirm installs exactly \
+                         those.\n• {}",
+                        comparison.differences.join("\n• ")
+                    )
+                };
+                self.outcome = Some(Outcome::Succeeded(text));
+            }
+            Some(Err(error)) => self.outcome = Some(Outcome::Failed(error)),
+            None => {}
+        }
         let exists = match &self.selected {
             Some(Selection::Mod(name)) => self.overview.get(name).is_some(),
             Some(Selection::Unmanaged(name)) => self
@@ -524,6 +542,38 @@ impl App {
             };
             if ui.button(log).clicked() {
                 self.show_log = !self.show_log;
+            }
+            let idle = self.running.is_none();
+            let save = ui
+                .add_enabled(idle, egui::Button::new("Save mod list…"))
+                .on_hover_text(
+                    "Save the installed mods (names, versions, checksums) as a list for the \
+                     players you play with: everyone in a multiplayer game needs the same mods",
+                );
+            if save.clicked() {
+                let picked = rfd::FileDialog::new()
+                    .add_filter("mod list", &["json"])
+                    .set_file_name("mod-list.json")
+                    .save_file();
+                if let Some(path) = picked {
+                    let context = ui.ctx().clone();
+                    self.start(&context, Job::ExportList { path });
+                }
+            }
+            let load = ui
+                .add_enabled(idle, egui::Button::new("Load mod list…"))
+                .on_hover_text(
+                    "Compare another player's mod list with your mods: its mods are ticked, and \
+                     what differs is said",
+                );
+            if load.clicked() {
+                let picked = rfd::FileDialog::new()
+                    .add_filter("mod list", &["json"])
+                    .pick_file();
+                if let Some(path) = picked {
+                    let context = ui.ctx().clone();
+                    self.start(&context, Job::CompareList { path });
+                }
             }
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 let idle = self.running.is_none();

@@ -30,12 +30,14 @@ mod install;
 mod listing;
 mod manifest;
 mod merge;
+mod mod_list;
 
 pub use apply::*;
 use build::*;
 pub(crate) use build::{copy_folder, function_paths, string_arguments};
 pub use listing::*;
 pub use manifest::*;
+pub use mod_list::*;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
