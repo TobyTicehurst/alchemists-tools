@@ -205,7 +205,9 @@ Only `name` is needed. Like Factorio's `info.json`:
 - **`name`**: letters and digits, starting with a letter. It names the containers and the UE4SS folder.
 - **`title`**: the name players see (default: `name`).
 - **`version`**: `major.minor.patch` (default `0.1.0`).
-- **`description`, `author`, `homepage`, `contact`**: shown in the README `dist` writes.
+- **`description`, `author`, `homepage`, `contact`**: shown in the README `dist` writes. Make `homepage` the mod's
+  Nexus Mods page (`https://www.nexusmods.com/alchemyfactory/mods/<id>`) once it has one: the GUI's Nexus Mods
+  view then knows the player has it.
 - **`team`**: the Thunderstore team that publishes it: letters, digits and `_`, not starting or ending with `_`.
   Mods that require it name it with this in their `manifest.json` (see "Sharing a mod").
 - **`dependencies`**: other mods, written `"[prefix] Name [operator version]"`. The operators are `<`,

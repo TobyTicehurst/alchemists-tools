@@ -63,11 +63,19 @@ pub struct Thumbnails {
 }
 
 impl Thumbnails {
-    fn get(&mut self, context: &egui::Context, path: &Path) -> Option<egui::TextureHandle> {
+    pub fn get(&mut self, context: &egui::Context, path: &Path) -> Option<egui::TextureHandle> {
         self.loaded
             .entry(path.to_path_buf())
             .or_insert_with(|| {
-                let picture = image::open(path).ok()?.thumbnail(256, 256).to_rgba8();
+                // by its contents: Nexus serves WebP pictures named .png
+                let picture = image::ImageReader::open(path)
+                    .ok()?
+                    .with_guessed_format()
+                    .ok()?
+                    .decode()
+                    .ok()?
+                    .thumbnail(256, 256)
+                    .to_rgba8();
                 let size = [picture.width() as usize, picture.height() as usize];
                 Some(context.load_texture(
                     path.display().to_string(),

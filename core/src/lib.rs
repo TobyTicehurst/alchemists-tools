@@ -15,6 +15,7 @@ pub mod import;
 pub mod json;
 pub mod mappings;
 pub mod mods;
+pub mod nexus;
 pub mod package;
 pub mod probe;
 pub mod reader;

@@ -102,7 +102,7 @@ fn is_backup_name(name: &str) -> bool {
 }
 
 /// The (year, month, day) of a day counted from 1970-01-01 (Howard Hinnant's `civil_from_days`).
-fn civil_date(days: i64) -> (i64, u32, u32) {
+pub(crate) fn civil_date(days: i64) -> (i64, u32, u32) {
     let shifted = days + 719_468;
     let era = shifted.div_euclid(146_097);
     let day_of_era = shifted.rem_euclid(146_097);

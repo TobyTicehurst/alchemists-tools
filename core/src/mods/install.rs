@@ -208,6 +208,7 @@ impl Workspace {
             name: info.name.clone(),
             title: info.title.clone(),
             version: info.version.clone(),
+            homepage: info.homepage.clone(),
             game_build: info.game_build.clone(),
             dependencies: info.dependencies.clone(),
             installed_by: installed_by.to_string(),

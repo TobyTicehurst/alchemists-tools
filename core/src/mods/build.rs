@@ -176,6 +176,7 @@ impl Workspace {
             name: name.clone(),
             title: mod_.title.clone(),
             version: mod_.version.clone(),
+            homepage: mod_.homepage.clone(),
             game_build: current_build,
             dependencies: mod_.dependencies.clone(),
             detours: mod_.detours.clone().unwrap_or_default(),

@@ -5,6 +5,7 @@
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod browse;
 mod list;
 mod setup;
 mod widgets;
@@ -52,6 +53,7 @@ enum Selection {
 #[derive(Clone, Copy, PartialEq)]
 enum View {
     Mods,
+    Nexus,
     Setup,
 }
 
@@ -97,6 +99,7 @@ struct App {
     /// A newer release of the tools, once the check (on its own thread) has said.
     newer_release: Option<Release>,
     release_check: Option<mpsc::Receiver<Option<Release>>>,
+    browse: browse::Browse,
 }
 
 /// How much larger than egui's own the text is.
@@ -140,6 +143,7 @@ impl App {
             thumbnails: Thumbnails::default(),
             newer_release: None,
             release_check: None,
+            browse: browse::Browse::new(),
         };
         app.start(context, Job::Refresh);
         let (sender, receiver) = mpsc::channel();
@@ -323,6 +327,7 @@ impl App {
             ui.heading("Alchemist's Tools");
             ui.separator();
             ui.selectable_value(&mut self.view, View::Mods, "Mods");
+            ui.selectable_value(&mut self.view, View::Nexus, "Nexus Mods");
             let problems = self
                 .checks
                 .iter()
@@ -663,6 +668,24 @@ impl eframe::App for App {
                     .min_size(300.0)
                     .show(ui, |ui| self.list(ui));
                 egui::CentralPanel::default().show(ui, |ui| self.details(ui));
+            }
+            View::Nexus => {
+                let idle = self.running.is_none();
+                let asked = self
+                    .browse
+                    .show(ui, &self.overview, &mut self.thumbnails, idle);
+                match asked {
+                    Some(browse::Asked::ShowMod(name)) => {
+                        self.selected = Some(Selection::Mod(name));
+                        self.view = View::Mods;
+                    }
+                    Some(browse::Asked::Import) => {
+                        let context = ui.ctx().clone();
+                        self.import_zip(&context);
+                        self.view = View::Mods;
+                    }
+                    None => {}
+                }
             }
             View::Setup => {
                 egui::CentralPanel::default().show(ui, |ui| self.setup(ui));

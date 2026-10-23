@@ -3,6 +3,16 @@
 use super::*;
 
 impl App {
+    /// Pick a zip, and import it.
+    pub fn import_zip(&mut self, context: &egui::Context) {
+        let picked = rfd::FileDialog::new()
+            .add_filter("zip", &["zip"])
+            .pick_file();
+        if let Some(zip) = picked {
+            self.start(context, Job::Import { zip });
+        }
+    }
+
     pub fn list(&mut self, ui: &mut egui::Ui) {
         ui.add_space(4.0);
         ui.horizontal(|ui| {
@@ -16,13 +26,8 @@ impl App {
                      it can be: it's placed safely, or refused, and what can't be checked is noted",
                 );
             if import.clicked() {
-                let picked = rfd::FileDialog::new()
-                    .add_filter("zip", &["zip"])
-                    .pick_file();
-                if let Some(zip) = picked {
-                    let context = ui.ctx().clone();
-                    self.start(&context, Job::Import { zip });
-                }
+                let context = ui.ctx().clone();
+                self.import_zip(&context);
             }
             ui.add(
                 egui::TextEdit::singleline(&mut self.filter)

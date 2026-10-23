@@ -4,12 +4,25 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
+use serde_json::Value;
 
 use crate::game::display_path;
 
 /// GET `url` over HTTPS (following redirects, which must stay HTTPS), with these extra headers,
 /// refusing more than `limit` bytes. An HTTP error status is an error.
 pub fn get(url: &str, headers: &[(&str, &str)], limit: u64) -> Result<Vec<u8>> {
+    request(url, headers, None, limit)
+}
+
+/// POST `body` as JSON to `url`, as [`get`] does, and read the answer as JSON.
+pub fn post_json(url: &str, headers: &[(&str, &str)], body: &Value, limit: u64) -> Result<Value> {
+    let mut headers = headers.to_vec();
+    headers.push(("Content-Type", "application/json"));
+    let bytes = request(url, &headers, Some(&body.to_string()), limit)?;
+    serde_json::from_slice(&bytes).with_context(|| format!("{url} didn't answer with JSON"))
+}
+
+fn request(url: &str, headers: &[(&str, &str)], body: Option<&str>, limit: u64) -> Result<Vec<u8>> {
     let curl = match std::env::var_os("SystemRoot") {
         Some(root) => Path::new(&root).join("System32").join("curl.exe"),
         None => PathBuf::from("curl"),
@@ -21,6 +34,9 @@ pub fn get(url: &str, headers: &[(&str, &str)], limit: u64) -> Result<Vec<u8>> {
         .args(["--max-filesize", &limit.to_string()]);
     for (name, value) in headers {
         command.arg("--header").arg(format!("{name}: {value}"));
+    }
+    if let Some(body) = body {
+        command.arg("--data-binary").arg(body);
     }
     command.arg(url);
     #[cfg(windows)]

@@ -51,6 +51,7 @@ pub struct Manifest {
     pub name: String,
     pub title: String,
     pub version: String,
+    pub homepage: String,
     pub game_build: Option<String>,
     pub dependencies: Vec<String>,
     /// `alchemists-tools` for `mod install`; `zip` for a mod extracted from its zip, whose own data

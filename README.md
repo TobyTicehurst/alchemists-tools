@@ -69,6 +69,10 @@ when it was made (in UTC). To go back, close the game and copy a backup's folder
 changes, so the GUI says to Confirm again (which installs them against the new game). If the game then crashes at
 start, UE4SS or a mod's C++ isn't ready for the new build: the GUI offers to disable UE4SS until they're updated.
 
+**Nexus Mods** lists the game's mods on [Nexus Mods](https://www.nexusmods.com/games/alchemyfactory/mods), with
+their pictures, summaries and files, marking those already in your mods folders. To install one, download its zip
+from its page and import it.
+
 **Import a zip** takes a mod made without this tool, such as an older download from a mod site, as far as it can
 safely: it refuses zips it can't place safely, and marks what it can't check (see
 [docs/MODDING.md](docs/MODDING.md), "Mods made without this tool").
@@ -82,6 +86,7 @@ The settings are shared with the command line, and everything the GUI does is a 
 | The mod list | `alchemists-tools mod list` |
 | Confirm | `alchemists-tools mod apply <names>...` (the mods to have installed) |
 | Import a zip (a mod made without this tool) | `alchemists-tools mod import <zip>` |
+| Nexus Mods | `alchemists-tools mod browse [search]` |
 | Setup | `alchemists-tools check`, `alchemists-tools settings` |
 | Setup's UE4SS buttons | `alchemists-tools ue4ss install`, `remove`, `disable`, `enable` |
 

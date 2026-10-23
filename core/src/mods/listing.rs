@@ -66,6 +66,7 @@ impl Workspace {
             let summary = mods.entry(name.clone()).or_insert_with(|| Summary {
                 title: manifest.title.clone(),
                 version: manifest.version.clone(),
+                homepage: manifest.homepage.clone(),
                 dependencies: manifest.dependencies.clone(),
                 game_build: manifest.game_build.clone(),
                 detours: manifest.detours.clone(),
@@ -87,6 +88,7 @@ impl Workspace {
             let summary = mods.entry(name.clone()).or_insert_with(|| Summary {
                 title: manifest.title.clone(),
                 version: manifest.version.clone(),
+                homepage: manifest.homepage.clone(),
                 dependencies: manifest.dependencies.clone(),
                 detours: manifest.detours.clone(),
                 ..Summary::new(name)
@@ -123,6 +125,7 @@ impl Workspace {
             let summary = mods.entry(name.clone()).or_insert_with(|| Summary {
                 title: entry.title.clone(),
                 version: entry.version.clone(),
+                homepage: entry.homepage.clone(),
                 dependencies: entry.dependencies.clone(),
                 detours: entry.detours.clone(),
                 ..Summary::new(name)
@@ -249,6 +252,50 @@ impl Workspace {
     }
 
     /// The mods in the mods folders, what's installed, and the load order.
+    /// The game's mods on Nexus Mods whose name or summary has `search` in it (all if None), most
+    /// endorsed first, and which of them are in the folders of mods or installed.
+    pub fn browse(&self, search: Option<&str>) -> Result<()> {
+        let overview = self.overview()?;
+        let search = search.map(str::to_lowercase);
+        let found = crate::nexus::mods()?;
+        let mut shown = 0;
+        for nexus in &found {
+            let matches = search.as_ref().is_none_or(|search| {
+                nexus.name.to_lowercase().contains(search)
+                    || nexus.summary.to_lowercase().contains(search)
+            });
+            if !matches {
+                continue;
+            }
+            shown += 1;
+            let here = match overview.from_nexus(nexus) {
+                Some(summary) if summary.installed.is_some() => {
+                    format!(" [installed: {}]", summary.name)
+                }
+                Some(summary) => format!(" [in the mods folders: {}]", summary.name),
+                None => String::new(),
+            };
+            note!(
+                "{} {} by {}: {} endorsements, {} downloads, updated {}{here}\n   {}\n   {}",
+                nexus.name,
+                nexus.version,
+                nexus.author,
+                nexus.endorsements,
+                nexus.downloads,
+                nexus.updated,
+                nexus.summary,
+                nexus.page()
+            );
+        }
+        note!(
+            "{shown} of the {} mods on Nexus Mods; to install one, download its zip from its page \
+             and import it (mod import <zip>), or put it in a mods folder if it was made with \
+             these tools",
+            found.len()
+        );
+        Ok(())
+    }
+
     pub fn list(&self) -> Result<()> {
         let overview = self.overview()?;
         let current = overview.game_build.as_deref();
@@ -675,6 +722,27 @@ pub struct Overview {
 impl Overview {
     pub fn get(&self, name: &str) -> Option<&Summary> {
         self.mods.iter().find(|summary| summary.name == name)
+    }
+
+    /// The mod here that's this one on Nexus: the one whose homepage is its page, or else one
+    /// with its name (ignoring case, spaces and punctuation).
+    pub fn from_nexus(&self, nexus: &crate::nexus::NexusMod) -> Option<&Summary> {
+        let simple = |text: &str| -> String {
+            text.chars()
+                .filter(|character| character.is_alphanumeric())
+                .flat_map(char::to_lowercase)
+                .collect()
+        };
+        let name = simple(&nexus.name);
+        self.mods
+            .iter()
+            .find(|summary| crate::nexus::mod_id_in(&summary.homepage) == Some(nexus.id))
+            .or_else(|| {
+                self.mods.iter().find(|summary| {
+                    !name.is_empty()
+                        && (simple(&summary.name) == name || simple(&summary.title) == name)
+                })
+            })
     }
 
     pub fn installed(&self) -> impl Iterator<Item = &Summary> {

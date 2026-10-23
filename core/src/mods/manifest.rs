@@ -10,6 +10,8 @@ pub struct Entry {
     pub name: String,
     pub title: String,
     pub version: String,
+    /// Its mod.json's homepage: its Nexus Mods page links it to that ([`crate::nexus`]).
+    pub homepage: String,
     pub game_build: Option<String>,
     pub dependencies: Vec<String>,
     /// Files it installs, relative to the game folder.
@@ -361,6 +363,7 @@ pub(super) fn entry_from_manifest(name: &str, manifest: &Manifest) -> Entry {
         name: name.to_string(),
         title: manifest.title.clone(),
         version: manifest.version.clone(),
+        homepage: manifest.homepage.clone(),
         game_build: manifest.game_build.clone(),
         dependencies: manifest.dependencies.clone(),
         files: manifest

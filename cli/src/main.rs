@@ -288,6 +288,11 @@ enum ModAction {
     },
     /// The mods in the mods folders, what is installed, and what needs attention
     List,
+    /// The game's mods on Nexus Mods, most endorsed first, and which are in the mods folders
+    Browse {
+        /// Only those whose name or summary has this in it
+        search: Option<String>,
+    },
     /// Every mod in the game folder, whether its files are as installed, and what else is there
     Scan,
 }
@@ -361,6 +366,7 @@ fn mod_command(
     match action {
         ModAction::New { name } => workspace.new_mod(&name),
         ModAction::List => workspace.list(),
+        ModAction::Browse { search } => workspace.browse(search.as_deref()),
         ModAction::Add { url, branch } => {
             workspace.add_from_git(&url, branch.as_deref()).map(|_| ())
         }
