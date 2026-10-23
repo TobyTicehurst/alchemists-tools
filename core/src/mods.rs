@@ -701,27 +701,234 @@ impl Workspace {
 
     /// The folder of the mod `name`, from the first folder of mods that has it.
     pub fn local_folder(&self, name: &str) -> Option<PathBuf> {
-        self.mods
-            .iter()
-            .map(|folder| folder.join(name))
-            .find(|folder| folder.join("mod.json").is_file())
+        self.mod_folders().into_iter().find(|folder| {
+            folder
+                .file_name()
+                .is_some_and(|folder_name| folder_name == name)
+        })
     }
 
-    /// Every mod folder (one with a mod.json) in the folders of mods, sorted by name; for a name in
-    /// more than one, the first folder's.
+    /// Every mod folder (one with a mod.json) in the folders of mods, in the order they're taken:
+    /// each folder's own mod folders first, then those in the git checkouts it holds
+    /// (`<checkout>/<mod>/` or `<checkout>/mods/<mod>/`, as `mod add` clones them). A name can come
+    /// more than once.
+    fn every_mod_folder(&self) -> Vec<PathBuf> {
+        mod_folders_in(&self.mods)
+    }
+
+    /// Every mod folder in the folders of mods, sorted by name; for a name in more than one, the
+    /// one taken first (see [`Self::every_mod_folder`]).
     pub fn mod_folders(&self) -> Vec<PathBuf> {
         let mut found: BTreeMap<String, PathBuf> = BTreeMap::new();
-        for mods in &self.mods {
-            for entry in std::fs::read_dir(mods).into_iter().flatten().flatten() {
-                let path = entry.path();
-                if path.join("mod.json").is_file() {
-                    found
-                        .entry(entry.file_name().to_string_lossy().into_owned())
-                        .or_insert(path);
-                }
-            }
+        for folder in self.every_mod_folder() {
+            let name = folder.file_name().unwrap().to_string_lossy().into_owned();
+            found.entry(name).or_insert(folder);
         }
         found.into_values().collect()
+    }
+
+    /// The git checkout a mod folder is in, if it's one `mod add` cloned (a checkout directly in a
+    /// folder of mods), and the URL it came from.
+    pub fn git_checkout(&self, folder: &Path) -> Option<(PathBuf, String)> {
+        folder
+            .ancestors()
+            .take(3)
+            .find(|checkout| {
+                checkout.join(".git").exists()
+                    && self
+                        .mods
+                        .iter()
+                        .any(|mods| checkout.parent() == Some(mods.as_path()))
+            })
+            .map(|checkout| {
+                let url = crate::git::origin(checkout).unwrap_or_default();
+                (checkout.to_path_buf(), url)
+            })
+    }
+
+    /// Clone a git repository into the first folder of mods, so the mods it holds are listed
+    /// (installing them is up to `apply` or `install`); returns their names.
+    pub fn add_from_git(&self, url: &str, reference: Option<&str>) -> Result<Vec<String>> {
+        let Some(mods) = self.mods.first() else {
+            bail!(
+                "no mods folder is set: set one first (alchemists-tools settings --mods <folder>)"
+            );
+        };
+        std::fs::create_dir_all(mods)?;
+        let mut folder = mods.join(crate::git::repository_name(url)?);
+        if folder.exists() {
+            bail!(
+                "{} already exists: to update it, alchemists-tools mod update <name>",
+                display_path(&folder)
+            );
+        }
+        note!("cloning {url} into {}", display_path(&folder));
+        crate::git::clone(url, reference, &folder)?;
+        // a repository that is one mod is named after it, as a mod's folder must be
+        if folder.join("mod.json").is_file() {
+            let found = Mod::load(&folder);
+            let wanted = found.as_ref().ok().map(|found| mods.join(&found.name));
+            if let Some(wanted) = wanted.filter(|wanted| *wanted != folder) {
+                if wanted.exists() {
+                    let _ = std::fs::remove_dir_all(&folder);
+                    bail!(
+                        "the repository's mod is named after {}, which already exists",
+                        display_path(&wanted)
+                    );
+                }
+                std::fs::rename(&folder, &wanted)?;
+                folder = wanted;
+            }
+        }
+        let names: Vec<String> = self
+            .every_mod_folder()
+            .into_iter()
+            .filter(|found| found.starts_with(&folder))
+            .map(|found| found.file_name().unwrap().to_string_lossy().into_owned())
+            .collect();
+        if names.is_empty() {
+            let _ = std::fs::remove_dir_all(&folder);
+            bail!(
+                "{url} holds no mod: no mod.json at its top, in a folder at its top, or in mods/"
+            );
+        }
+        note!(
+            "added {} from {url}: tick to install (or alchemists-tools mod install <name>)",
+            names.join(", ")
+        );
+        Ok(names)
+    }
+
+    /// Pull the git repository a mod was added from; the next install builds the new version.
+    pub fn update_from_git(&self, name: &str) -> Result<()> {
+        let folder = self
+            .local_folder(name)
+            .with_context(|| format!("there's no mod {name} in the mods folders"))?;
+        let Some((checkout, url)) = self.git_checkout(&folder) else {
+            bail!("{name} wasn't added from git (its folder isn't a clone in a mods folder)");
+        };
+        note!("updating {} from {url}", display_path(&checkout));
+        let told = crate::git::pull(&checkout)?;
+        note!("{}", told.trim());
+        Ok(())
+    }
+
+    /// The mods kept as zips in the folders of mods, by name: for a name in more than one folder,
+    /// the first folder's; in one folder, the newest version.
+    pub fn archives(&self) -> BTreeMap<String, Archive> {
+        let mut found: BTreeMap<String, Archive> = BTreeMap::new();
+        for mods in &self.mods {
+            let mut newest: BTreeMap<String, Archive> = BTreeMap::new();
+            for entry in std::fs::read_dir(mods).into_iter().flatten().flatten() {
+                let path = entry.path();
+                if !path
+                    .extension()
+                    .is_some_and(|extension| extension.eq_ignore_ascii_case("zip"))
+                {
+                    continue;
+                }
+                let Some(archive) = read_archive(&path) else {
+                    continue;
+                };
+                let name = archive.manifest.name.clone();
+                let version = |archive: &Archive| parse_version(&archive.manifest.version, "").ok();
+                let newer = newest
+                    .get(&name)
+                    .is_none_or(|other| version(&archive) > version(other));
+                if is_name(&name) && newer {
+                    newest.insert(name, archive);
+                }
+            }
+            for (name, archive) in newest {
+                found.entry(name).or_insert(archive);
+            }
+        }
+        found
+    }
+
+    /// Before an installed mod that no folder of mods holds is uninstalled, keep it as a zip in the
+    /// first folder of mods, so it stays listed and can be installed again: its files, its manifest,
+    /// and its install record entry (which holds the table edits merged for it). Nothing is kept if
+    /// a zip of it is there already. A missing file stops this, unless `force`.
+    fn keep_copy(
+        &self,
+        files: &GameFiles,
+        entry: &Entry,
+        manifest: Option<&Manifest>,
+        force: bool,
+    ) -> Result<()> {
+        use std::io::Write;
+        let name = &entry.name;
+        if self.archives().contains_key(name) {
+            return Ok(());
+        }
+        let Some(mods) = self.mods.first() else {
+            if force {
+                warning!("no mods folder is set, so no copy of {name} is kept");
+                return Ok(());
+            }
+            bail!(
+                "{name} isn't in a mods folder, and no mods folder is set to keep a copy of it in: \
+                 set one, or force uninstalling it without a copy"
+            );
+        };
+        let listed: Vec<String> = match manifest {
+            Some(manifest) => manifest
+                .files
+                .iter()
+                .map(|file| file.path.clone())
+                .collect(),
+            None => entry.files.clone(),
+        };
+        let missing: Vec<&String> = listed
+            .iter()
+            .filter(|path| !files.resolve(path).is_ok_and(|full| full.is_file()))
+            .collect();
+        if !missing.is_empty() {
+            let missing: Vec<&str> = missing.iter().map(|path| path.as_str()).collect();
+            if force {
+                warning!(
+                    "{name}'s files aren't all there ({}), so no copy of it is kept",
+                    missing.join(", ")
+                );
+                return Ok(());
+            }
+            bail!(
+                "{name} isn't in a mods folder, and a copy can't be kept to install it again, as \
+                 these of its files are missing: {}; force uninstalling it without a copy",
+                missing.join(", ")
+            );
+        }
+        let mut kept = match manifest {
+            Some(manifest) => manifest.clone(),
+            None => Self::manifest_for(entry, "alchemists-tools", vec![]),
+        };
+        kept.files = listed
+            .iter()
+            .map(|path| files.record(path))
+            .collect::<Result<_>>()?;
+        std::fs::create_dir_all(mods)?;
+        let path = mods.join(format!("{name}_{}.zip", entry.version));
+        // written whole beside it first, so a failure never leaves half a zip that looks like a mod
+        let part = path.with_extension("zip.part");
+        let mut zip = zip::ZipWriter::new(std::fs::File::create(&part)?);
+        let options = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Deflated);
+        for file in &kept.files {
+            zip.start_file(file.path.as_str(), options)?;
+            zip.write_all(&std::fs::read(files.resolve(&file.path)?)?)?;
+        }
+        zip.start_file(GameFiles::manifest_path(name), options)?;
+        zip.write_all((serde_json::to_string_pretty(&kept)? + "\n").as_bytes())?;
+        zip.start_file(KEPT_ENTRY, options)?;
+        zip.write_all((serde_json::to_string_pretty(entry)? + "\n").as_bytes())?;
+        zip.finish()?;
+        std::fs::rename(&part, &path)?;
+        note!(
+            "kept a copy of {name} as {}, to install it again",
+            display_path(&path)
+        );
+        Ok(())
     }
 
     /// Where the tool's own Lua library mod goes: the folder of mods that has it, else the first.
@@ -2595,6 +2802,17 @@ impl Workspace {
                 unverified.join("\n   ")
             );
         }
+        // a mod no folder of mods holds is kept as a zip there first, to install it again
+        if self.local_folder(name).is_none() {
+            let kept_entry = entry.clone().or_else(|| {
+                manifest
+                    .as_ref()
+                    .map(|found| entry_from_manifest(name, found))
+            });
+            if let Some(kept_entry) = kept_entry {
+                self.keep_copy(&files, &kept_entry, manifest.as_ref(), force)?;
+            }
+        }
         // from here on, a failure puts the game folder back as it was
         let mut transaction = files.begin()?;
         if entry.is_some() {
@@ -3196,6 +3414,8 @@ impl Workspace {
         }
         let wanted: BTreeSet<&String> = wanted.iter().collect();
         let mut problems: Vec<(Vec<String>, String)> = vec![];
+        let archives = self.archives();
+        let mut from_archives: Vec<&Archive> = vec![];
         let mut to_build: IndexMap<String, Mod> = IndexMap::new();
         for name in &wanted {
             match self.local_folder(name) {
@@ -3214,10 +3434,15 @@ impl Workspace {
                     Err(error) => problems.push((vec![name.to_string()], format!("{error:#}"))),
                 },
                 None if record.mods.contains_key(*name) => {}
-                None => problems.push((
-                    vec![name.to_string()],
-                    format!("there's no mod {name} in the mods folders, and it isn't installed"),
-                )),
+                None => match archives.get(*name) {
+                    Some(archive) => from_archives.push(archive),
+                    None => problems.push((
+                        vec![name.to_string()],
+                        format!(
+                            "there's no mod {name} in the mods folders, and it isn't installed"
+                        ),
+                    )),
+                },
             }
         }
         let removing: Vec<String> = record
@@ -3280,11 +3505,27 @@ impl Workspace {
         for (_, info) in &built {
             mods.insert(info.name.clone(), info.clone());
         }
+        for archive in &from_archives {
+            mods.insert(archive.manifest.name.clone(), archive.entry());
+        }
         problems.extend(check_together(&mods)?);
+        let ue4ss_prefix = format!("{}/", UE4SS_FOLDER.join("/"));
         let needing: Vec<String> = built
             .iter()
             .filter(|(_, info)| info.needs_ue4ss)
             .map(|(_, info)| info.name.clone())
+            .chain(
+                from_archives
+                    .iter()
+                    .filter(|archive| {
+                        archive
+                            .manifest
+                            .files
+                            .iter()
+                            .any(|file| file.path.starts_with(&ue4ss_prefix))
+                    })
+                    .map(|archive| archive.manifest.name.clone()),
+            )
             .collect();
         if !needing.is_empty() && !join(&self.game.root, UE4SS_FOLDER).is_dir() {
             let names: Vec<&String> = needing.iter().collect();
@@ -3339,8 +3580,48 @@ impl Workspace {
             }
             new_files.push(records);
         }
+        for archive in &from_archives {
+            let name = &archive.manifest.name;
+            for file in &archive.manifest.files {
+                if let Some(other) = claimed.insert(file.path.clone(), name.clone()) {
+                    problems.push((
+                        vec![other.clone(), name.clone()],
+                        format!("{other} and {name} both install {}", file.path),
+                    ));
+                }
+            }
+            let taken = Self::files_not_free(
+                &files,
+                name,
+                &archive.manifest.files,
+                &record,
+                &staying,
+                &freed,
+            )?;
+            for problem in taken {
+                problems.push((
+                    vec![name.clone()],
+                    format!("{name}: its files would replace one that isn't its own: {problem}"),
+                ));
+            }
+        }
         if !problems.is_empty() {
             return Err(fail("can't install these mods together", problems));
+        }
+        // a mod no folder of mods holds is kept as a zip there before it's uninstalled
+        for name in &removing {
+            if self.local_folder(name).is_none() {
+                let manifest = manifests
+                    .iter()
+                    .find(|(owner, _)| owner == name)
+                    .map(|(_, manifest)| manifest);
+                if let Err(error) = self.keep_copy(&files, &record.mods[name], manifest, force) {
+                    problems.push((vec![name.clone()], format!("{error:#}")));
+                }
+            }
+        }
+        if !problems.is_empty() {
+            return Err(fail("can't uninstall every mod", problems));
         }
 
         // from here on, a failure puts the game folder back as it was
@@ -3393,10 +3674,44 @@ impl Workspace {
                 &Self::manifest_for(info, "alchemists-tools", records),
             )?;
         }
+        for archive in &from_archives {
+            let mut zip = zip::ZipArchive::new(std::fs::File::open(&archive.path)?)?;
+            for file in &archive.manifest.files {
+                let mut contents = vec![];
+                std::io::Read::read_to_end(
+                    &mut zip.by_name(&file.path).with_context(|| {
+                        format!("{} has no {}", display_path(&archive.path), file.path)
+                    })?,
+                    &mut contents,
+                )?;
+                transaction.write(&file.path, &contents)?;
+                if transaction.files().record(&file.path)? != *file {
+                    bail!(
+                        "{}: {} isn't as its manifest says (is the zip damaged?)",
+                        display_path(&archive.path),
+                        file.path
+                    );
+                }
+            }
+            self.write_manifest(&mut transaction, &archive.manifest)?;
+            note!(
+                "installing {} from {}",
+                archive.manifest.name,
+                display_path(&archive.path)
+            );
+        }
         self.save_record(&mut transaction, &record)?;
         transaction.commit()?;
 
-        let installed: Vec<String> = built.iter().map(|(_, info)| info.name.clone()).collect();
+        let installed: Vec<String> = built
+            .iter()
+            .map(|(_, info)| info.name.clone())
+            .chain(
+                from_archives
+                    .iter()
+                    .map(|archive| archive.manifest.name.clone()),
+            )
+            .collect();
         note!(
             "\ninstalled {}; uninstalled {} (load order: {}); restart the game to load them",
             if installed.is_empty() {
@@ -3478,13 +3793,34 @@ impl Workspace {
                 },
             };
             summary.ignored_copies = self
-                .mods
-                .iter()
-                .map(|mods| mods.join(&name))
-                .filter(|copy| *copy != folder && copy.join("mod.json").is_file())
+                .every_mod_folder()
+                .into_iter()
+                .filter(|copy| {
+                    *copy != folder && copy.file_name().is_some_and(|other| other == name.as_str())
+                })
                 .collect();
+            summary.git = self.git_checkout(&folder).map(|(_, url)| url);
             summary.folder = Some(folder);
             mods.insert(name, summary);
+        }
+        for (name, archive) in self.archives() {
+            let manifest = &archive.manifest;
+            let summary = mods.entry(name.clone()).or_insert_with(|| Summary {
+                title: manifest.title.clone(),
+                version: manifest.version.clone(),
+                dependencies: manifest.dependencies.clone(),
+                game_build: manifest.game_build.clone(),
+                detours: manifest.detours.clone(),
+                hooks: manifest.hooks.clone(),
+                tables: manifest.tables.clone(),
+                new_buildings: manifest.new_buildings.clone(),
+                ..Summary::new(&name)
+            });
+            if summary.folder.is_some() {
+                summary.ignored_copies.push(archive.path);
+            } else {
+                summary.archive = Some(archive.path);
+            }
         }
         for (name, manifest) in &manifests {
             let summary = mods.entry(name.clone()).or_insert_with(|| Summary {
@@ -3682,6 +4018,102 @@ impl Workspace {
     }
 }
 
+/// Every mod folder (one with a mod.json) in `folders` (folders of mods), in the order they're
+/// taken: each folder's own mod folders first, then those in the git checkouts it holds
+/// (`<checkout>/<mod>/` or `<checkout>/mods/<mod>/`). A name can come more than once.
+pub fn mod_folders_in(folders: &[PathBuf]) -> Vec<PathBuf> {
+    let folders_in = |folder: &Path| -> Vec<PathBuf> {
+        let mut folders: Vec<PathBuf> = std::fs::read_dir(folder)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .map(|entry| entry.path())
+            .filter(|path| {
+                path.is_dir()
+                    && !path
+                        .file_name()
+                        .is_some_and(|name| name.to_string_lossy().starts_with('.'))
+            })
+            .collect();
+        folders.sort();
+        folders
+    };
+    let (mut direct, mut checkouts) = (vec![], vec![]);
+    for mods in folders {
+        for folder in folders_in(mods) {
+            if folder.join("mod.json").is_file() {
+                direct.push(folder);
+            } else if folder.join(".git").exists() {
+                for inside in [folder.clone(), folder.join("mods")] {
+                    checkouts.extend(
+                        folders_in(&inside)
+                            .into_iter()
+                            .filter(|inner| inner.join("mod.json").is_file()),
+                    );
+                }
+            }
+        }
+    }
+    direct.extend(checkouts);
+    direct
+}
+
+/// In a zip kept by [`Workspace::keep_copy`]: the mod's install record entry.
+const KEPT_ENTRY: &str = "alchemists-tools-entry.json";
+
+/// A mod kept as a zip in a folder of mods: one `mod dist` made (a download), or one this tool made
+/// when uninstalling a mod it had no folder for. It holds the mod's files as installed and its
+/// manifest; a kept one also its install record entry.
+#[derive(Clone, Debug)]
+pub struct Archive {
+    pub path: PathBuf,
+    pub manifest: Manifest,
+    pub entry: Option<Entry>,
+}
+
+impl Archive {
+    /// Its install record entry: as kept, or else from its manifest (a mod's own zip, whose table
+    /// edits are in its own container).
+    fn entry(&self) -> Entry {
+        let name = &self.manifest.name;
+        let mut entry = self
+            .entry
+            .clone()
+            .unwrap_or_else(|| entry_from_manifest(name, &self.manifest));
+        entry.files = self
+            .manifest
+            .files
+            .iter()
+            .map(|file| file.path.clone())
+            .collect();
+        entry
+    }
+}
+
+/// A zip holding one mod's manifest (`manifests/<name>.json`), read; None for any other zip.
+fn read_archive(path: &Path) -> Option<Archive> {
+    let mut zip = zip::ZipArchive::new(std::fs::File::open(path).ok()?).ok()?;
+    let prefix = format!("{}/", crate::files::MANIFESTS);
+    let manifests: Vec<String> = zip
+        .file_names()
+        .filter(|name| name.starts_with(&prefix) && name.ends_with(".json"))
+        .map(str::to_string)
+        .collect();
+    let [manifest_name] = manifests.as_slice() else {
+        return None;
+    };
+    let manifest: Manifest = serde_json::from_reader(zip.by_name(manifest_name).ok()?).ok()?;
+    let entry = zip
+        .by_name(KEPT_ENTRY)
+        .ok()
+        .and_then(|file| serde_json::from_reader(file).ok());
+    Some(Archive {
+        path: path.to_path_buf(),
+        manifest,
+        entry,
+    })
+}
+
 /// What [`Workspace::apply`] did.
 #[derive(Clone, Debug, Default)]
 pub struct Applied {
@@ -3803,6 +4235,10 @@ pub struct Summary {
     /// What's wrong with its folder (its mod.json can't be read, say).
     pub error: Option<String>,
     pub thumbnail: Option<PathBuf>,
+    /// The zip it's kept as in a folder of mods, if it has no folder (see [`Workspace::archives`]).
+    pub archive: Option<PathBuf>,
+    /// The URL of the git repository it was added from (`mod add`).
+    pub git: Option<String>,
     /// The game build it's made for (its mod.json's `game-build`), or else the one it was built
     /// against when installed.
     pub game_build: Option<String>,
@@ -3833,7 +4269,7 @@ impl Summary {
 
     /// Whether it can be built and installed: it's in a mods folder, which is as it should be.
     pub fn installable(&self) -> bool {
-        self.folder.is_some() && self.error.is_none()
+        (self.folder.is_some() && self.error.is_none()) || self.archive.is_some()
     }
 
     /// Whether the game is a newer build than the one it's made for.
@@ -3881,6 +4317,24 @@ impl Summary {
                 self.game_build.as_deref().unwrap_or_default(),
                 current.unwrap_or_default()
             ));
+        }
+        if self.folder.is_none() {
+            match (&self.archive, &self.installed) {
+                (Some(archive), _) => notes.push(format!(
+                    "kept as {} in the mods folder: it can be installed and uninstalled, not \
+                     rebuilt",
+                    archive
+                        .file_name()
+                        .map(|name| name.to_string_lossy().into_owned())
+                        .unwrap_or_default()
+                )),
+                (None, Some(_)) => notes.push(
+                    "not in the mods folders: uninstalling it keeps a copy there, as a zip, to \
+                     install it again"
+                        .to_string(),
+                ),
+                (None, None) => {}
+            }
         }
         if !self.ignored_copies.is_empty() {
             let copies: Vec<String> = self

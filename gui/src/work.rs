@@ -16,6 +16,10 @@ pub enum Job {
     Refresh,
     /// Make the installed mods exactly these (see `Workspace::apply`).
     Apply { wanted: Vec<String>, force: bool },
+    /// Clone a git repository of mods into the mods folder.
+    AddFromGit { url: String, branch: Option<String> },
+    /// Pull the repository a mod was added from.
+    UpdateFromGit { name: String },
 }
 
 /// What a job found: always the mods and the setup as they are afterwards.
@@ -24,6 +28,8 @@ pub struct Done {
     pub checks: Vec<Check>,
     /// For an apply: what it did, or why it failed.
     pub applied: Option<Result<Applied, String>>,
+    /// For the other jobs that change something: what was done, or why it failed.
+    pub action: Option<Result<String, String>>,
 }
 
 pub enum Event {
@@ -87,8 +93,9 @@ fn workspace(settings: &Settings) -> Workspace {
     // without a game, the mods folders can still be listed
     let game = settings.game().unwrap_or_else(|| Game::new(PathBuf::new()));
     let usmap = settings.usmap(Some(&game)).unwrap_or_default();
+    // only the mods folders set: not one relative to wherever the GUI was started
     Workspace::new(
-        settings.mods(),
+        settings.mods.clone(),
         build_folder(settings),
         game,
         usmap,
@@ -98,19 +105,43 @@ fn workspace(settings: &Settings) -> Workspace {
 
 fn run(job: Job, settings: &Settings) -> Done {
     let workspace = workspace(settings);
-    let applied = match job {
-        Job::Refresh => None,
-        Job::Apply { wanted, force } => Some(if !workspace.game.paks().is_dir() {
-            Err("the game wasn't found: set its folder in Setup".to_string())
-        } else {
-            workspace
-                .apply(&wanted, force)
-                .map_err(|error| format!("{error:#}"))
-        }),
-    };
+    let text = |error: anyhow::Error| format!("{error:#}");
+    let (mut applied, mut action) = (None, None);
+    match job {
+        Job::Refresh => {}
+        Job::Apply { wanted, force } => {
+            applied = Some(if !workspace.game.paks().is_dir() {
+                Err("the game wasn't found: set its folder in Setup".to_string())
+            } else {
+                workspace.apply(&wanted, force).map_err(text)
+            })
+        }
+        Job::AddFromGit { url, branch } => {
+            action = Some(
+                workspace
+                    .add_from_git(&url, branch.as_deref())
+                    .map(|names| {
+                        format!(
+                            "Added {} from git: tick to install, then Confirm.",
+                            names.join(", ")
+                        )
+                    })
+                    .map_err(text),
+            )
+        }
+        Job::UpdateFromGit { name } => {
+            action = Some(
+                workspace
+                    .update_from_git(&name)
+                    .map(|_| format!("Updated {name} from git: Confirm installs the new version."))
+                    .map_err(text),
+            )
+        }
+    }
     Done {
-        overview: workspace.overview().map_err(|error| format!("{error:#}")),
+        overview: workspace.overview().map_err(text),
         checks: environment::checks(settings),
         applied,
+        action,
     }
 }

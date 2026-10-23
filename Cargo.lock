@@ -76,6 +76,7 @@ name = "alchemists-gui"
 version = "0.1.0"
 dependencies = [
  "alchemists-core",
+ "anyhow",
  "eframe",
  "egui",
  "image",

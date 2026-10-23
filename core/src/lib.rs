@@ -9,6 +9,7 @@ pub mod extract;
 pub mod facts;
 pub mod files;
 pub mod game;
+pub mod git;
 pub mod json;
 pub mod mods;
 pub mod package;

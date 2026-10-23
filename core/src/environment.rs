@@ -185,13 +185,21 @@ pub fn checks(settings: &Settings) -> Vec<Check> {
                 a new save and press Ctrl + Numpad 6.",
         },
     });
-    for folder in settings.mods() {
-        let count = std::fs::read_dir(&folder)
-            .into_iter()
-            .flatten()
-            .flatten()
-            .filter(|entry| entry.path().join("mod.json").is_file())
-            .count();
+    if settings.mods.is_empty() {
+        checks.push(Check {
+            name: "Mods folder",
+            status: Status::Missing,
+            summary: "none set: the GUI lists no mods, and the command line uses the mods folder \
+                where it's started"
+                .to_string(),
+            path: None,
+            help: "The folder your mod folders are in (where unticked mods stay, too). Choose \
+                one in Setup, or: alchemists-tools settings --mods <folder>",
+        });
+    }
+    for folder in &settings.mods {
+        let count = crate::mods::mod_folders_in(std::slice::from_ref(folder)).len();
+        let folder = folder.clone();
         checks.push(Check {
             name: "Mods folder",
             status: if !folder.is_dir() {
@@ -207,9 +215,25 @@ pub fn checks(settings: &Settings) -> Vec<Check> {
                 "doesn't exist".to_string()
             },
             path: Some(std::path::absolute(&folder).unwrap_or(folder)),
-            help: "A folder of mod folders, each with a mod.json.",
+            help: "A folder of mod folders, each with a mod.json (or git clones of them). \
+                Unticked mods stay here.",
         });
     }
+    let git = crate::git::version();
+    checks.push(Check {
+        name: "Git",
+        status: if git.is_some() {
+            Status::Found
+        } else {
+            Status::Optional
+        },
+        summary: match git {
+            Some(version) => format!("version {version}"),
+            None => "not found: only adding mods from git needs it".to_string(),
+        },
+        path: None,
+        help: "For adding mods from git repositories (https://git-scm.com/downloads).",
+    });
     let project = settings.project();
     checks.push(Check {
         name: "Stub Unreal project",

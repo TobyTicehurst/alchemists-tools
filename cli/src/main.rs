@@ -234,6 +234,18 @@ enum ModAction {
     },
     /// Build a mod, then zip it for players: <build>/<name>_<version>.zip
     Dist { name: String },
+    /// Clone a git repository of mods (or one mod) into the first mods folder, so its mods are
+    /// listed; then install them as any other. Needs git
+    Add {
+        /// The repository's URL, e.g. https://github.com/someone/MyMod
+        url: String,
+        /// A branch or tag to take instead of the default branch
+        #[arg(long)]
+        branch: Option<String>,
+    },
+    /// Pull the git repository a mod was added from (only a fast-forward); install it again to
+    /// use the new version
+    Update { name: String },
     /// The mods in the mods folders, what is installed, and what needs attention
     List,
     /// Every mod in the game folder, whether its files are as installed, and what else is there
@@ -309,6 +321,10 @@ fn mod_command(
     match action {
         ModAction::New { name } => workspace.new_mod(&name),
         ModAction::List => workspace.list(),
+        ModAction::Add { url, branch } => {
+            workspace.add_from_git(&url, branch.as_deref()).map(|_| ())
+        }
+        ModAction::Update { name } => workspace.update_from_git(&name),
         ModAction::Apply {
             names,
             none: _,

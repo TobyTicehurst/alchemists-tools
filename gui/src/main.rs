@@ -84,11 +84,28 @@ struct App {
     hint: Option<String>,
     /// Asking before uninstalling mods whose buildings crash saves.
     confirming: bool,
+    /// The "Add from git" window, while it's open.
+    adding: Option<GitForm>,
     thumbnails: Thumbnails,
 }
 
+/// What the "Add from git" window asks for.
+#[derive(Default)]
+struct GitForm {
+    url: String,
+    branch: String,
+}
+
+/// How much larger than egui's own the text is.
+const TEXT_SCALE: f32 = 1.15;
+
 impl App {
     fn new(context: &egui::Context) -> Self {
+        context.all_styles_mut(|style| {
+            for font in style.text_styles.values_mut() {
+                font.size *= TEXT_SCALE;
+            }
+        });
         let (settings, outcome) = match Settings::load() {
             Ok(settings) => (settings, None),
             Err(error) => (
@@ -116,6 +133,7 @@ impl App {
             outcome,
             hint: None,
             confirming: false,
+            adding: None,
             thumbnails: Thumbnails::default(),
         };
         app.start(context, Job::Refresh);
@@ -188,6 +206,11 @@ impl App {
             Err(error) => self.overview_error = Some(error),
         }
         self.checks = done.checks;
+        match done.action {
+            Some(Ok(text)) => self.outcome = Some(Outcome::Succeeded(text)),
+            Some(Err(error)) => self.outcome = Some(Outcome::Failed(error)),
+            None => {}
+        }
         let failed = matches!(done.applied, Some(Err(_)));
         match done.applied {
             Some(Ok(applied)) => {
@@ -318,11 +341,22 @@ impl App {
 
     fn list(&mut self, ui: &mut egui::Ui) {
         ui.add_space(4.0);
-        ui.add(
-            egui::TextEdit::singleline(&mut self.filter)
-                .hint_text("🔍 Search mods")
-                .desired_width(f32::INFINITY),
-        );
+        ui.horizontal(|ui| {
+            let add = ui
+                .add_enabled(
+                    self.running.is_none(),
+                    egui::Button::new("➕ Add from git…"),
+                )
+                .on_hover_text("Clone a git repository of mods into the mods folder");
+            if add.clicked() {
+                self.adding = Some(GitForm::default());
+            }
+            ui.add(
+                egui::TextEdit::singleline(&mut self.filter)
+                    .hint_text("🔍 Search mods")
+                    .desired_width(f32::INFINITY),
+            );
+        });
         ui.add_space(4.0);
         if let Some(error) = &self.overview_error {
             ui.colored_label(ui.visuals().error_fg_color, error);
@@ -494,11 +528,33 @@ impl App {
                     (None, false) => "Not installed".to_string(),
                 };
                 ui.label(RichText::new(state).strong());
-                if let Some(folder) = &summary.folder {
-                    if ui.button("📁 Open folder").clicked() {
-                        open_folder(folder);
+                ui.horizontal(|ui| {
+                    if let Some(folder) = &summary.folder {
+                        if ui.button("📁 Open folder").clicked() {
+                            open_folder(folder);
+                        }
                     }
-                }
+                    if summary.git.is_some() {
+                        let update = ui
+                            .add_enabled(
+                                self.running.is_none(),
+                                egui::Button::new("⟳ Update from git"),
+                            )
+                            .on_hover_text(
+                                "Pull its repository (only if that's a fast-forward); Confirm \
+                                 then installs the new version",
+                            );
+                        if update.clicked() {
+                            let context = ui.ctx().clone();
+                            self.start(
+                                &context,
+                                Job::UpdateFromGit {
+                                    name: summary.name.clone(),
+                                },
+                            );
+                        }
+                    }
+                });
             });
         });
         ui.add_space(8.0);
@@ -572,6 +628,18 @@ impl App {
                 }
                 if let Some(folder) = &summary.folder {
                     field(ui, "Folder", &display_path(folder));
+                }
+                if let Some(url) = &summary.git {
+                    ui.label(RichText::new("From git").weak());
+                    if url.starts_with("https://") {
+                        ui.hyperlink(url);
+                    } else {
+                        ui.label(url);
+                    }
+                    ui.end_row();
+                }
+                if let Some(archive) = &summary.archive {
+                    field(ui, "Kept as", &display_path(archive));
                 }
                 ui.label(RichText::new("Dependencies").weak());
                 ui.vertical(|ui| {
@@ -815,6 +883,70 @@ impl App {
         }
     }
 
+    fn git_dialog(&mut self, context: &egui::Context) {
+        let Some(form) = &mut self.adding else {
+            return;
+        };
+        let mut answer = None;
+        egui::Modal::new(egui::Id::unique("git")).show(context, |ui| {
+            ui.set_width(480.0);
+            ui.heading("Add mods from git");
+            ui.add_space(6.0);
+            ui.label(
+                "Clones the repository into the mods folder. Its mods are then listed, unticked: \
+                 tick them and Confirm to install them.",
+            );
+            ui.add_space(6.0);
+            ui.label(
+                RichText::new(
+                    "Only add mods you trust: a mod's Lua scripts and DLLs run in the game with \
+                     your account's rights.",
+                )
+                .color(ui.visuals().warn_fg_color),
+            );
+            ui.add_space(8.0);
+            egui::Grid::new("git form").num_columns(2).show(ui, |ui| {
+                ui.label("URL");
+                ui.add(
+                    egui::TextEdit::singleline(&mut form.url)
+                        .hint_text("https://github.com/someone/SomeMod")
+                        .desired_width(340.0),
+                );
+                ui.end_row();
+                ui.label("Branch or tag");
+                ui.add(
+                    egui::TextEdit::singleline(&mut form.branch)
+                        .hint_text("the default branch")
+                        .desired_width(340.0),
+                );
+                ui.end_row();
+            });
+            ui.add_space(10.0);
+            ui.horizontal(|ui| {
+                let ready = !form.url.trim().is_empty();
+                if ui.add_enabled(ready, egui::Button::new("Add")).clicked() {
+                    answer = Some(true);
+                }
+                if ui.button("Cancel").clicked() {
+                    answer = Some(false);
+                }
+            });
+        });
+        if let Some(add) = answer {
+            let form = self.adding.take().unwrap_or_default();
+            if add {
+                let branch = form.branch.trim();
+                self.start(
+                    context,
+                    Job::AddFromGit {
+                        url: form.url.trim().to_string(),
+                        branch: (!branch.is_empty()).then(|| branch.to_string()),
+                    },
+                );
+            }
+        }
+    }
+
     fn log_view(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
             ui.label(RichText::new("Log").strong());
@@ -854,6 +986,7 @@ impl App {
                     }
                 });
                 ui.add_space(6.0);
+                let mut create: Option<PathBuf> = None;
                 egui::Grid::new("checks")
                     .num_columns(3)
                     .spacing([12.0, 8.0])
@@ -878,10 +1011,33 @@ impl App {
                                         egui::Label::new(RichText::new(check.help).small()).wrap(),
                                     );
                                 }
+                                // a mods folder that's set but not there yet
+                                let missing_folder = check.path.as_ref().filter(|_| {
+                                    check.name == "Mods folder" && check.status == Status::Missing
+                                });
+                                if let Some(folder) = missing_folder {
+                                    if ui.button("Create it").clicked() {
+                                        create = Some(folder.clone());
+                                    }
+                                }
                             });
                             ui.end_row();
                         }
                     });
+                if let Some(folder) = create {
+                    match std::fs::create_dir_all(&folder) {
+                        Ok(()) => {
+                            let context = ui.ctx().clone();
+                            self.start(&context, Job::Refresh);
+                        }
+                        Err(error) => {
+                            self.outcome = Some(Outcome::Failed(format!(
+                                "couldn't make {}: {error}",
+                                display_path(&folder)
+                            )))
+                        }
+                    }
+                }
                 ui.add_space(14.0);
                 ui.separator();
                 ui.heading("Where things are");
@@ -937,10 +1093,7 @@ impl App {
                                 editing.mods.remove(index);
                             }
                             if editing.mods.is_empty() {
-                                ui.label(
-                                    RichText::new("none: the mods folder where the tools start")
-                                        .weak(),
-                                );
+                                ui.label(RichText::new("none set").weak());
                             }
                             if ui
                                 .button("➕ Add a mods folder…")
@@ -1041,6 +1194,10 @@ impl eframe::App for App {
             let context = ui.ctx().clone();
             self.confirm_dialog(&context);
         }
+        if self.adding.is_some() {
+            let context = ui.ctx().clone();
+            self.git_dialog(&context);
+        }
     }
 }
 
@@ -1066,11 +1223,22 @@ impl Row<'_> {
             let can_tick = self.enabled && (summary.installable() || self.installed);
             let checkbox = ui
                 .add_enabled(can_tick, egui::Checkbox::without_text(&mut ticked))
-                .on_hover_text(if ticked { "Installed once confirmed" } else { "Not installed once confirmed" });
+                .on_hover_text(if ticked {
+                    "Installed once confirmed"
+                } else {
+                    "Not installed once confirmed"
+                });
             if checkbox.changed() {
                 actions.push(Action::Tick(summary.name.clone(), ticked));
             }
-            thumbnail(ui, thumbnails, &summary.name, &summary.title, summary.thumbnail.as_deref(), 22.0);
+            thumbnail(
+                ui,
+                thumbnails,
+                &summary.name,
+                &summary.title,
+                summary.thumbnail.as_deref(),
+                22.0,
+            );
             let mut title = RichText::new(&summary.title);
             if self.selected {
                 title = title.strong();
@@ -1105,7 +1273,8 @@ impl Row<'_> {
                         .on_hover_text(warnings.join("\n\n"));
                 }
                 if summary.error.is_some() {
-                    chip(ui, "broken", error).on_hover_text(summary.error.clone().unwrap_or_default());
+                    chip(ui, "broken", error)
+                        .on_hover_text(summary.error.clone().unwrap_or_default());
                 }
                 if summary.outdated(self.current) {
                     chip(ui, "old game build", warn).on_hover_text(format!(
@@ -1118,7 +1287,7 @@ impl Row<'_> {
                     match installed.origin {
                         Origin::Tool => {}
                         Origin::Zip => {
-                            chip(ui, "zip", warn).on_hover_text(
+                            chip(ui, "from zip", warn).on_hover_text(
                                 "Installed from its zip: its table edits aren't merged with the \
                                  other mods'. Install it from its mod folder to merge them.",
                             );
@@ -1143,9 +1312,22 @@ impl Row<'_> {
                         );
                     }
                 }
-                if summary.folder.is_none() && self.installed {
-                    chip(ui, "no source", Color32::GRAY)
-                        .on_hover_text("Installed, but not in the mods folders: it can be kept or uninstalled, not rebuilt");
+                if summary.folder.is_none() {
+                    if summary.archive.is_some() {
+                        chip(ui, "kept as zip", Color32::GRAY).on_hover_text(
+                            "Kept as a zip in the mods folder: it can be installed and \
+                             uninstalled, not rebuilt",
+                        );
+                    } else if self.installed {
+                        chip(ui, "no source", Color32::GRAY).on_hover_text(
+                            "Installed, but not in the mods folders: unticking it keeps a copy \
+                             there as a zip, to install it again",
+                        );
+                    }
+                }
+                if summary.git.is_some() {
+                    chip(ui, "git", Color32::GRAY)
+                        .on_hover_text(summary.git.clone().unwrap_or_default());
                 }
                 let accent = ui.visuals().selection.bg_fill;
                 match (self.installed, self.ticked) {

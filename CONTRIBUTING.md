@@ -36,6 +36,7 @@ In `core/src/`:
 | `mods` | Mod folders: build, install (merging), uninstall, apply a set at once, zip, scan, the overview the list and GUI show |
 | `files` | Manifests, the checks before a file in the game folder is deleted or replaced, and transactions (all or nothing) |
 | `report` | Where messages go: printed, or collected by the GUI with the mods each is about |
+| `git` | Cloning and pulling mods' git repositories (`mod add`, `mod update`) |
 | `settings`, `environment` | The saved settings (shared by the command line and the GUI); finding the game, UE4SS and the rest |
 | `probe` | UE4SS probe mods |
 | `stub` | Setting up the stub Unreal project |

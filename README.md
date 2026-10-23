@@ -40,6 +40,11 @@ ticks the mods it requires; unticking one unticks the mods that require it. File
 tool are listed apart, since this tool can't remove them. Mods installed from a zip, or without a manifest, are
 marked, since they need care.
 
+**The mods folder** holds every mod's source, installed or not: unticking a mod uninstalls it from the game, and it
+stays in the list, unticked. A mod installed from somewhere else is kept there as a zip when it's unticked, so it can
+be ticked again. **Add from git** clones a repository of mods (or of one mod) into the mods folder, and a mod added
+that way has **Update from git**.
+
 **Setup** shows whether the game, UE4SS, the `.usmap` and the Unreal parts are found, and where the mods folders are.
 The settings are shared with the command line, and everything the GUI does is a command too:
 
@@ -47,6 +52,7 @@ The settings are shared with the command line, and everything the GUI does is a 
 |---|---|
 | The mod list | `alchemists-tools mod list` |
 | Confirm | `alchemists-tools mod apply <names>...` (the mods to have installed) |
+| Add from git, Update from git | `alchemists-tools mod add <url>`, `alchemists-tools mod update <name>` |
 | Setup | `alchemists-tools check`, `alchemists-tools settings` |
 
 ## Extract the game's data
@@ -115,6 +121,7 @@ alchemists-tools mod build MyMod                       # -> build/MyMod/, laid o
 alchemists-tools mod install MyMod --with-dependencies
 alchemists-tools mod uninstall MyMod [--force]
 alchemists-tools mod apply MyMod OtherMod             # exactly these installed: all at once, or nothing changes
+alchemists-tools mod add https://github.com/someone/SomeMods   # clone mods from git into the mods folder
 alchemists-tools mod dist MyMod                        # -> build/MyMod_<version>.zip, and a README beside it
 alchemists-tools mod list
 alchemists-tools mod scan                              # every mod in the game folder, and its files

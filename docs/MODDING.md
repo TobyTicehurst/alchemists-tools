@@ -226,7 +226,10 @@ The fields this tool adds:
   paths, such as `"/Script/BeltTD.BeltTDInventoryComponent:CheckCanCost"`. Two mods can't both detour one
   function, so installing them together stops. `[]` says there are none. Without the field, a build whose
   `dlls/main.dll` names game functions warns. Functions hooked through UE4SS (Lua's `RegisterHook`, or named in
-  the DLL) are found by the build; two unrelated mods hooking one game function is a warning.
+  the DLL) are found by the build; two unrelated mods hooking one game function is a warning. A native function
+  with no reflected path (found by its address or its code) is named `exe+0x<offset>`, its offset in the game build
+  of `game-build`, as in `"exe+0x4acbd60"`; prefer the reflected path when there is one, since a clash is only
+  caught when both mods use the same name.
 - **`content`**: folders or assets cooked in the stub project. They must be in `/Game/Mods/<name>/`, so no
   two mods share asset paths, and they're packaged as `zzz_<name>Content_P`.
 - **`new-craft-types`**: recipe lists of the mod's own, past the game's named craft types. Edits and
@@ -286,8 +289,40 @@ look), with a journal written before each step. If a step fails, say because the
 everything is put back. If the tool itself is stopped part way, the next install or uninstall puts it back first.
 They refuse to start while the game is running.
 
-**Several folders of mods.** `--mods` can be given more than once (and saved with `alchemists-tools settings
---mods <folder> --mods <folder>`). A mod in more than one folder is taken from the first.
+**The mods folder.** It holds the mods' sources, installed or not; the game folder only holds what's installed.
+Save it once with `alchemists-tools settings --mods <folder>` (the GUI's Setup does the same); without a setting,
+the command line uses `mods` where it's started. `--mods` can be given more than once, and a mod in more than one
+folder is taken from the first. In a mods folder:
+- a folder with a `mod.json` is a mod (a link to a folder elsewhere works too, such as a junction to a mod kept in
+  its own repository);
+- a git clone holds mods at its top or in its `mods/` folder;
+- a zip holding a mod's manifest is a mod ready to install: one `mod dist` made, or one the tool kept.
+
+**Kept mods.** Uninstalling a mod that no mods folder holds (one installed from its zip, or from a folder since
+removed) first keeps it as `<name>_<version>.zip` in the first mods folder, with its files, its manifest and its
+install record entry (which holds the table edits merged for it), so it stays listed and can be installed again.
+A mod kept that way installs exactly as it was, but can't be rebuilt. If its files are missing, uninstalling stops,
+unless forced (then no copy is kept).
+
+**Mods from git.**
+
+```
+alchemists-tools mod add https://github.com/someone/SomeMods [--branch v1.2]   # clone into the mods folder
+alchemists-tools mod update SomeMod                                           # pull it again
+```
+
+`mod add` clones the latest commit of a branch or tag. A repository that is one mod is named after it; one with
+several is kept as it is, and its mods are found inside. Then install them as any other. `mod update` only
+fast-forwards, so it never merges changes you made. Before adding a mod:
+- a mod's Lua scripts and DLLs run in the game with your account's rights, so only add mods you trust;
+- a mod is built from its source here, so the repository must hold everything it installs: a C++ mod's built
+  `dlls/main.dll`, since it isn't compiled for you. A mod with cooked content (`content` in mod.json) can't be
+  built without its author's stub project;
+- the mods it requires aren't fetched: add their repositories too;
+- it may be made for another game build (`game-build`), and its new craft types get numbers here
+  (`allocations.json`), which may differ from its author's;
+- git must be installed. Private repositories need credentials git already has (it isn't allowed to ask), and
+  submodules and Git LFS files aren't fetched.
 
 **Several mods together.** The game reads each table whole from the last container that has it. So
 installing and uninstalling merge the table edits of every installed mod into one container,
