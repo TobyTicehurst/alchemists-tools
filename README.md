@@ -13,7 +13,7 @@ and run it. It downloads that release's files and checks them against the checks
 
 It then offers to install UE4SS into the game, which mods with Lua or C++ need (the build they're made for, checked
 against its checksum; Setup in the GUI does the same later). It needs no administrator rights. Run a newer release's
-installer to update; uninstalling keeps your mods folder, settings and UE4SS. On first use, the tools download `oo2core_9_win64.dll` (the Oodle decompressor the game's files need)
+installer to update (the GUI says when one is out: it asks GitHub at most once a day); uninstalling keeps your mods folder, settings and UE4SS. On first use, the tools download `oo2core_9_win64.dll` (the Oodle decompressor the game's files need)
 next to themselves.
 
 To build from source instead, install [Rust](https://rustup.rs/), then:

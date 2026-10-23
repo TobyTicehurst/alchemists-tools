@@ -130,40 +130,6 @@ pub fn installed(game: &Game) -> Installed {
     }
 }
 
-/// Download `url` with HTTPS only, through the system's curl (Windows' own, on Windows).
-fn download(url: &str) -> Result<Vec<u8>> {
-    let curl = match std::env::var_os("SystemRoot") {
-        Some(root) => Path::new(&root).join("System32").join("curl.exe"),
-        None => PathBuf::from("curl"),
-    };
-    let file = std::env::temp_dir().join(format!("alchemists-tools-{ZIP}"));
-    let mut command = std::process::Command::new(&curl);
-    command
-        .args(["--fail", "--location", "--silent", "--show-error"])
-        .args(["--proto", "=https", "--proto-redir", "=https"])
-        .args(["--max-filesize", &LIMIT.to_string(), "--output"])
-        .arg(&file)
-        .arg(url);
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        command.creation_flags(CREATE_NO_WINDOW);
-    }
-    let output = command
-        .output()
-        .with_context(|| format!("running {}", display_path(&curl)))?;
-    if !output.status.success() {
-        bail!(
-            "couldn't download {url}: {}",
-            String::from_utf8_lossy(&output.stderr).trim()
-        );
-    }
-    let bytes = std::fs::read(&file)?;
-    let _ = std::fs::remove_file(&file);
-    Ok(bytes)
-}
-
 /// The pinned build's zip: the one given, or downloaded; checked against its SHA-256 either way.
 fn zip_bytes(given: Option<&Path>) -> Result<Vec<u8>> {
     if let Some(path) = given {
@@ -180,7 +146,7 @@ fn zip_bytes(given: Option<&Path>) -> Result<Vec<u8>> {
     let mut failures = vec![];
     for url in sources() {
         note!("downloading {url}");
-        match download(&url) {
+        match crate::web::get(&url, &[], LIMIT) {
             Ok(bytes) if sha256(&bytes) == ZIP_SHA256 => return Ok(bytes),
             Ok(_) => failures.push(format!(
                 "{url}: not the expected file (its SHA-256 differs)"

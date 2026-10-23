@@ -12,12 +12,14 @@ mod work;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
+use std::sync::mpsc;
 
 use alchemists_core::environment::{Check, Status};
 use alchemists_core::game::display_path;
 use alchemists_core::mods::{
     parse_version, requirement_text, satisfies, Kind, Origin, Overview, Summary, Unmanaged,
 };
+use alchemists_core::release::{self, Release};
 use alchemists_core::report::{Level, Message};
 use alchemists_core::settings::Settings;
 use alchemists_core::ue4ss;
@@ -92,6 +94,9 @@ struct App {
     /// Asking before uninstalling mods whose buildings crash saves.
     confirming: bool,
     thumbnails: Thumbnails,
+    /// A newer release of the tools, once the check (on its own thread) has said.
+    newer_release: Option<Release>,
+    release_check: Option<mpsc::Receiver<Option<Release>>>,
 }
 
 /// How much larger than egui's own the text is.
@@ -133,8 +138,18 @@ impl App {
             hint: None,
             confirming: false,
             thumbnails: Thumbnails::default(),
+            newer_release: None,
+            release_check: None,
         };
         app.start(context, Job::Refresh);
+        let (sender, receiver) = mpsc::channel();
+        let repaint = context.clone();
+        std::thread::spawn(move || {
+            // a failed check (offline, say) shows nothing
+            let _ = sender.send(release::newer_release().ok().flatten());
+            repaint.request_repaint();
+        });
+        app.release_check = Some(receiver);
         app
     }
 
@@ -319,6 +334,16 @@ impl App {
                 RichText::new("Setup")
             };
             ui.selectable_value(&mut self.view, View::Setup, setup);
+            if let Some(release) = &self.newer_release {
+                ui.separator();
+                let text = RichText::new(format!("Version {} is out", release.version))
+                    .color(ui.visuals().hyperlink_color);
+                ui.hyperlink_to(text, &release.page).on_hover_text(format!(
+                    "A newer release of Alchemist's Tools (this is {}): download its installer \
+                     from this page and run it to update",
+                    env!("CARGO_PKG_VERSION")
+                ));
+            }
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 let reload = ui
                     .add_enabled(self.running.is_none(), egui::Button::new("⟳ Reload"))
@@ -609,6 +634,12 @@ impl App {
 impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.receive();
+        if let Some(check) = &self.release_check {
+            if let Ok(release) = check.try_recv() {
+                self.newer_release = release;
+                self.release_check = None;
+            }
+        }
         egui::Panel::top("top").show(ui, |ui| {
             ui.add_space(4.0);
             self.top_bar(ui);
