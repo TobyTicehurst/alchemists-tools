@@ -58,6 +58,16 @@ marked, since they need care.
 stays in the list, unticked. A mod installed from somewhere else is kept there as a zip when it's unticked, so it can
 be ticked again. Put a mod's zip there (a download from Nexus Mods or Thunderstore) to list it.
 
+**Your saves are backed up** before the installed mods change (by the GUI or by `mod apply`, `install` and
+`uninstall`), since a save that uses a mod's buildings crashes the game without it, and one that uses its items can
+lose them. The newest 10 backups are kept in `%APPDATA%\alchemists-tools\save-backups\`, one folder each, named for
+when it was made (in UTC). To go back, close the game and copy a backup's folders into
+`%LOCALAPPDATA%\AlchemyFactory\Saved\SaveGames\`.
+
+**After a game update**, the installed mods' table changes still hold the old game's tables, hiding the update's own
+changes, so the GUI says to Confirm again (which installs them against the new game). If the game then crashes at
+start, UE4SS or a mod's C++ isn't ready for the new build: the GUI offers to disable UE4SS until they're updated.
+
 **Import a zip** takes a mod made without this tool, such as an older download from a mod site, as far as it can
 safely: it refuses zips it can't place safely, and marks what it can't check (see
 [docs/MODDING.md](docs/MODDING.md), "Mods made without this tool").

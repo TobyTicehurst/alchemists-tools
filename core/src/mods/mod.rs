@@ -33,7 +33,7 @@ mod merge;
 
 pub use apply::*;
 use build::*;
-pub(crate) use build::{function_paths, string_arguments};
+pub(crate) use build::{copy_folder, function_paths, string_arguments};
 pub use listing::*;
 pub use manifest::*;
 
@@ -585,6 +585,15 @@ impl Workspace {
     }
 
     /// Write the install record, as part of a change to the game folder.
+    /// Back up the game's saves before the installed mods change ([`crate::backups`]).
+    fn back_up_saves(&self) -> Result<Option<PathBuf>> {
+        let backup = crate::backups::back_up(&self.game)?;
+        if let Some(folder) = &backup {
+            note!("backed up the saves to {}", display_path(folder));
+        }
+        Ok(backup)
+    }
+
     fn save_record(&self, transaction: &mut Transaction, record: &mut Record) -> Result<()> {
         record.game_build = game_build(&self.game);
         let relative = format!("{}/{RECORD}", PAK_FOLDER.join("/"));

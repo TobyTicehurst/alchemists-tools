@@ -230,6 +230,13 @@ impl App {
                 if warnings > 0 {
                     text += &format!(" {warnings} warning(s): the marked mods, and the log.");
                 }
+                if let Some(backup) = &applied.saves_backup {
+                    text += &format!(
+                        " Your saves were backed up first, to {}: to go back, copy its folders \
+                         into the game's SaveGames folder.",
+                        display_path(backup)
+                    );
+                }
                 self.outcome = Some(Outcome::Succeeded(text));
             }
             Some(Err(error)) => {
@@ -552,7 +559,8 @@ impl App {
             ui.add_space(6.0);
             ui.label(format!(
                 "A save with a placed {} crashes the game once its mod is uninstalled. \
-                 Deconstruct them in every save you keep first.",
+                 Deconstruct them in every save you keep first. (Your saves are backed up \
+                 before anything changes, and reinstalling the mod makes them load again.)",
                 buildings.join(", ")
             ));
             ui.add_space(10.0);

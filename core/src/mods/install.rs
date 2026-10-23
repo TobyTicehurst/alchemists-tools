@@ -305,6 +305,7 @@ impl Workspace {
                     .collect()
             })
             .unwrap_or_default();
+        self.back_up_saves()?;
 
         // from here on, a failure puts the game folder back as it was
         let mut transaction = files.begin()?;
@@ -506,6 +507,7 @@ impl Workspace {
                 self.keep_copy(&files, &kept_entry, manifest.as_ref(), force)?;
             }
         }
+        self.back_up_saves()?;
         // from here on, a failure puts the game folder back as it was
         let mut transaction = files.begin()?;
         if entry.is_some() {

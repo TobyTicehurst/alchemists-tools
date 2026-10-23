@@ -1,5 +1,6 @@
 //! Reading and writing Alchemy Factory (UE 5.7) game files.
 
+pub mod backups;
 pub mod blueprint;
 pub mod content;
 pub mod datatable;

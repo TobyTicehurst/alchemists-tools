@@ -241,6 +241,19 @@ impl Workspace {
         if !problems.is_empty() {
             return Err(fail("can't uninstall every mod", problems));
         }
+        // the saves, if the mods change: a save may use what a mod adds
+        let changing = !removing.is_empty()
+            || mods.iter().any(|(name, entry)| {
+                record
+                    .mods
+                    .get(name)
+                    .is_none_or(|old| old.version != entry.version)
+            });
+        let saves_backup = if changing {
+            self.back_up_saves()?
+        } else {
+            None
+        };
 
         // from here on, a failure puts the game folder back as it was
         let mut transaction = files.begin()?;
@@ -368,6 +381,7 @@ impl Workspace {
             installed,
             uninstalled: removing,
             load_order: record.load_order,
+            saves_backup,
         })
     }
 }
@@ -378,6 +392,8 @@ pub struct Applied {
     pub installed: Vec<String>,
     pub uninstalled: Vec<String>,
     pub load_order: Vec<String>,
+    /// The backup of the saves made first, if the installed mods changed and there were saves.
+    pub saves_backup: Option<PathBuf>,
 }
 
 /// What's wrong with a set of mods installed together, each with the mods it's about: a required

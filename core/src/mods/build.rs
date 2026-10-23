@@ -21,7 +21,7 @@ pub(super) fn leaf_values(
     }
 }
 
-fn copy_folder(from: &Path, to: &Path) -> Result<()> {
+pub(crate) fn copy_folder(from: &Path, to: &Path) -> Result<()> {
     std::fs::create_dir_all(to)?;
     for entry in std::fs::read_dir(from)? {
         let entry = entry?;
