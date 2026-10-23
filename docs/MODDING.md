@@ -206,6 +206,8 @@ Only `name` is needed. Like Factorio's `info.json`:
 - **`title`**: the name players see (default: `name`).
 - **`version`**: `major.minor.patch` (default `0.1.0`).
 - **`description`, `author`, `homepage`, `contact`**: shown in the README `dist` writes.
+- **`team`**: the Thunderstore team that publishes it: letters, digits and `_`, not starting or ending with `_`.
+  Mods that require it name it with this in their `manifest.json` (see "Sharing a mod").
 - **`dependencies`**: other mods, written `"[prefix] Name [operator version]"`. The operators are `<`,
   `<=`, `=`, `>=` and `>`.
 
@@ -434,7 +436,8 @@ folder; the tool installs it as it does a Lua mod, with the mod's table edits be
 detours in mod.json's `"detours"`, so that a second mod detouring one of them can't be installed beside it.
 
 Building one:
-- it must be compiled against the source of the exact UE4SS build installed (the "Git SHA" on the second line
+- it must be compiled against the source of the exact UE4SS build installed: `v3.0.1-1164-g5e627997`, the one
+  the tools install for players (`core/src/ue4ss.rs`; the "Git SHA" on the second line
   of `ue4ss/UE4SS.log`), with Visual Studio 2022 (MSVC 14.43 or later), Rust and CMake;
 - part of that source (UEPseudo) is private to GitHub accounts linked to an Epic Games account, with the
   invitation to the EpicGames organisation accepted;
@@ -467,21 +470,81 @@ under `/Game/Arts/`) let a Blueprint use the game's models. They're never packag
 ## Sharing a mod
 
 ```
-alchemists-tools mod dist MyMod      # -> build/MyMod_<version>.zip, and build/MyMod_<version>_README.txt
+alchemists-tools mod dist MyMod      # -> build/MyMod_<version>.zip, and build/MyMod_<version>_README.md
 ```
 
-The zip is for players without this tool. It holds:
-- the mod's files;
-- its manifest, so this tool recognises it once extracted;
-- its own data container, `zzz_<name>_P`, with its edits plus those of the mods it requires.
+One zip serves every way of sharing: upload it to Nexus Mods, or as a Thunderstore package, as it is. It holds:
+- at its top, what Thunderstore reads: `manifest.json`, `icon.png` (the mod's `thumbnail.png` cut to 256x256, or a
+  plain square), `README.md`, and the mod folder's `CHANGELOG.md` if it has one;
+- `AlchemyFactory/...`: the mod's files as they go in the game folder, for players installing by hand, with its own
+  data container (`zzz_<name>_P`, its edits plus those of the mods it requires) and its file manifest;
+- `alchemists-tools-entry.json`: the mod as built, with its edits. A player with this tool puts the zip in their mods
+  folder and ticks it, and its edits are merged with their other mods' (its own data container is left out).
 
-The README is written beside the zip, not into it: mod sites have their own place for a mod's
-description and install instructions, so paste it there. It has install and uninstall instructions, and
-since players can't merge tables, it also:
-- lists the tables the mod replaces;
-- tells players to delete the required mods' table files;
-- lists dependencies;
-- warns about new buildings.
+`manifest.json` has Thunderstore's fields, and this tool's under a key of their own, so that neither clashes with
+what Thunderstore adds later (Thunderstore ignores keys it doesn't know):
+
+```json
+{
+  "name": "MyMod", "version_number": "1.0.0", "website_url": "", "description": "Up to 250 characters",
+  "dependencies": ["MyTeam-AlchemistsLibrary-0.2.5"],
+  "alchemists-tools": {
+    "title": "My Mod", "description": "In full", "author": "", "team": "MyTeam", "contact": "",
+    "dependencies": ["AlchemistsLibrary >= 0.2.5", "? BiggerChests"], "game-build": "25991404", "detours": []
+  }
+}
+```
+
+Thunderstore's `dependencies` are only the required mods, each as `<team>-<name>-<version>`, at the version the mod
+was built against. Thunderstore checks that each one is on Thunderstore when the zip is uploaded, so publish
+dependencies first. The team is the dependency's own mod.json `team`; a dependency without one is left out, with a
+warning. This tool's `dependencies` keep the full form: version ranges, and optional, recommended and incompatible
+mods, which Thunderstore can't express. `dist` checks Thunderstore's other rules: a plain version (`1.0.0`, not
+`01.0.0`), a description of at most 250 characters (a longer one is cut short in `manifest.json` and kept whole in
+the README), and a README of at most 100,000 characters.
+
+The README, also written beside the zip for a mod page, has install and uninstall instructions for both kinds of
+player, the dependencies, and a warning about new buildings. Since players installing by hand can't merge tables, it
+also lists the tables the mod replaces, and which required mods' table files to delete.
+
+## Mods made without this tool
+
+```
+alchemists-tools mod import "Some Mod v1.2.zip" [--name SomeMod] [--version 1.2.0]
+```
+
+The GUI's **Import a zip…** does the same. A mod from a mod site is turned, as far as can be done safely, into a zip
+in the mods folder that installs and uninstalls beside other mods. This is a best effort for mods that exist
+already; it isn't meant to last, and mods shared with `mod dist` need none of it.
+
+The zip is never extracted as it is. Each file is checked and placed by rules:
+- a UE4SS mod's folder (one holding `Scripts/` or `dlls/main.dll`, anywhere in the zip) goes to
+  `ue4ss/Mods/<its name>/`: its Lua, `dlls/main.dll`, `enabled.txt` (added if missing) and text settings;
+- containers (`.pak`, `.utoc`, `.ucas`) go to `Paks/~mods/`, or `Paks/LogicMods/` if they're in a `LogicMods` folder;
+- documents and pictures are left out. So are UE4SS's own files (a bundled UE4SS, its settings, signatures,
+  `mods.txt`, a `.usmap`), with a caution: they change UE4SS for every mod, so install them by hand, if at all.
+
+It refuses the whole zip for any of these:
+- a path that isn't plain: `..`, a drive, a device name such as `NUL`, or a stream (`:`);
+- a link, or an encrypted file;
+- a program or script file (`.exe`, `.bat`, `.ps1` and so on), or an archive inside it;
+- a DLL other than a UE4SS mod's `dlls/main.dll`. Anything else would be loaded some other way, such as beside the
+  game's executable;
+- a file that would go where one already is in the game folder. It never unzips over anything;
+- a name of UE4SS's own mods, or of this tool's merged containers;
+- more than 5,000 files or 1 GB, or a file that expands too much for its size.
+
+A container that only replaces game DataTables is turned into table edits, so its changes merge with other mods'
+instead of replacing whole tables. The edits must give back exactly the mod's tables, or the container is kept as it
+is. What can't be checked is recorded as a caution, shown in the mod's details and warned about whenever it's
+installed:
+- a C++ mod's detours;
+- a kept container's whole replacements;
+- Lua that opens files, runs programs or uses the network;
+- a DLL that names networking, process or registry functions;
+- table changes worked out against the current game build.
+
+A caution isn't a verdict, and no check makes a mod safe: its Lua and DLLs run with your account's rights.
 
 ## After a game update
 

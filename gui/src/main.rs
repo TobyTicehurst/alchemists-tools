@@ -16,7 +16,8 @@ use alchemists_core::mods::{
     parse_version, requirement_text, satisfies, Kind, Origin, Overview, Summary, Unmanaged,
 };
 use alchemists_core::report::{Level, Message};
-use alchemists_core::settings::{self, Settings};
+use alchemists_core::settings::Settings;
+use alchemists_core::ue4ss;
 use eframe::egui::{self, Align, Color32, Layout, RichText, Vec2};
 
 use work::{Event, Job, Running};
@@ -67,6 +68,8 @@ struct App {
     overview: Overview,
     overview_error: Option<String>,
     checks: Vec<Check>,
+    /// UE4SS in the game folder, if the game was found.
+    ue4ss: Option<ue4ss::Installed>,
     /// The mods to have installed once Confirm is clicked.
     ticked: BTreeSet<String>,
     selected: Option<Selection>,
@@ -84,16 +87,7 @@ struct App {
     hint: Option<String>,
     /// Asking before uninstalling mods whose buildings crash saves.
     confirming: bool,
-    /// The "Add from git" window, while it's open.
-    adding: Option<GitForm>,
     thumbnails: Thumbnails,
-}
-
-/// What the "Add from git" window asks for.
-#[derive(Default)]
-struct GitForm {
-    url: String,
-    branch: String,
 }
 
 /// How much larger than egui's own the text is.
@@ -121,6 +115,7 @@ impl App {
             overview: Overview::default(),
             overview_error: None,
             checks: vec![],
+            ue4ss: None,
             ticked: BTreeSet::new(),
             selected: None,
             filter: String::new(),
@@ -133,7 +128,6 @@ impl App {
             outcome,
             hint: None,
             confirming: false,
-            adding: None,
             thumbnails: Thumbnails::default(),
         };
         app.start(context, Job::Refresh);
@@ -206,6 +200,7 @@ impl App {
             Err(error) => self.overview_error = Some(error),
         }
         self.checks = done.checks;
+        self.ue4ss = done.ue4ss;
         match done.action {
             Some(Ok(text)) => self.outcome = Some(Outcome::Succeeded(text)),
             Some(Err(error)) => self.outcome = Some(Outcome::Failed(error)),
@@ -342,14 +337,23 @@ impl App {
     fn list(&mut self, ui: &mut egui::Ui) {
         ui.add_space(4.0);
         ui.horizontal(|ui| {
-            let add = ui
+            let import = ui
                 .add_enabled(
                     self.running.is_none(),
-                    egui::Button::new("➕ Add from git…"),
+                    egui::Button::new("📥 Import a zip…"),
                 )
-                .on_hover_text("Clone a git repository of mods into the mods folder");
-            if add.clicked() {
-                self.adding = Some(GitForm::default());
+                .on_hover_text(
+                    "Import a mod made without this tool (a download from a mod site), as best \
+                     it can be: it's placed safely, or refused, and what can't be checked is noted",
+                );
+            if import.clicked() {
+                let picked = rfd::FileDialog::new()
+                    .add_filter("zip", &["zip"])
+                    .pick_file();
+                if let Some(zip) = picked {
+                    let context = ui.ctx().clone();
+                    self.start(&context, Job::Import { zip });
+                }
             }
             ui.add(
                 egui::TextEdit::singleline(&mut self.filter)
@@ -534,26 +538,6 @@ impl App {
                             open_folder(folder);
                         }
                     }
-                    if summary.git.is_some() {
-                        let update = ui
-                            .add_enabled(
-                                self.running.is_none(),
-                                egui::Button::new("⟳ Update from git"),
-                            )
-                            .on_hover_text(
-                                "Pull its repository (only if that's a fast-forward); Confirm \
-                                 then installs the new version",
-                            );
-                        if update.clicked() {
-                            let context = ui.ctx().clone();
-                            self.start(
-                                &context,
-                                Job::UpdateFromGit {
-                                    name: summary.name.clone(),
-                                },
-                            );
-                        }
-                    }
                 });
             });
         });
@@ -623,23 +607,15 @@ impl App {
                         Origin::Tool => "by this tool",
                         Origin::Zip => "from its zip",
                         Origin::Unverified => "without a manifest",
+                        Origin::Imported => "imported by this tool, as best it could",
                     };
                     field(ui, "Installed", &format!("{} ({how})", installed.version));
                 }
                 if let Some(folder) = &summary.folder {
                     field(ui, "Folder", &display_path(folder));
                 }
-                if let Some(url) = &summary.git {
-                    ui.label(RichText::new("From git").weak());
-                    if url.starts_with("https://") {
-                        ui.hyperlink(url);
-                    } else {
-                        ui.label(url);
-                    }
-                    ui.end_row();
-                }
                 if let Some(archive) = &summary.archive {
-                    field(ui, "Kept as", &display_path(archive));
+                    field(ui, "Zip", &display_path(archive));
                 }
                 ui.label(RichText::new("Dependencies").weak());
                 ui.vertical(|ui| {
@@ -714,8 +690,8 @@ impl App {
         }
     }
 
-    fn actions(&mut self, ui: &mut egui::Ui) {
-        ui.add_space(4.0);
+    /// How the last job went, until closed.
+    fn outcome_banner(&mut self, ui: &mut egui::Ui) {
         if let Some(outcome) = &self.outcome {
             let (icon, text, color) = match outcome {
                 Outcome::Succeeded(text) => ("✔", text, Color32::from_rgb(90, 170, 90)),
@@ -748,6 +724,11 @@ impl App {
             }
             ui.add_space(4.0);
         }
+    }
+
+    fn actions(&mut self, ui: &mut egui::Ui) {
+        ui.add_space(4.0);
+        self.outcome_banner(ui);
         let installed = self.installed_names();
         let installing: Vec<String> = self.ticked.difference(&installed).cloned().collect();
         let removing: Vec<String> = installed.difference(&self.ticked).cloned().collect();
@@ -761,12 +742,7 @@ impl App {
                     .find(|message| !message.text.trim().is_empty())
                     .map(|message| message.text.trim().to_string())
                     .unwrap_or_default();
-                let doing = if running.applying {
-                    "Building and installing…"
-                } else {
-                    "Reading the mods…"
-                };
-                ui.label(RichText::new(doing).strong());
+                ui.label(RichText::new(running.doing).strong());
                 ui.add(egui::Label::new(RichText::new(last).weak()).truncate());
             } else {
                 let mut parts = vec![];
@@ -883,70 +859,6 @@ impl App {
         }
     }
 
-    fn git_dialog(&mut self, context: &egui::Context) {
-        let Some(form) = &mut self.adding else {
-            return;
-        };
-        let mut answer = None;
-        egui::Modal::new(egui::Id::unique("git")).show(context, |ui| {
-            ui.set_width(480.0);
-            ui.heading("Add mods from git");
-            ui.add_space(6.0);
-            ui.label(
-                "Clones the repository into the mods folder. Its mods are then listed, unticked: \
-                 tick them and Confirm to install them.",
-            );
-            ui.add_space(6.0);
-            ui.label(
-                RichText::new(
-                    "Only add mods you trust: a mod's Lua scripts and DLLs run in the game with \
-                     your account's rights.",
-                )
-                .color(ui.visuals().warn_fg_color),
-            );
-            ui.add_space(8.0);
-            egui::Grid::new("git form").num_columns(2).show(ui, |ui| {
-                ui.label("URL");
-                ui.add(
-                    egui::TextEdit::singleline(&mut form.url)
-                        .hint_text("https://github.com/someone/SomeMod")
-                        .desired_width(340.0),
-                );
-                ui.end_row();
-                ui.label("Branch or tag");
-                ui.add(
-                    egui::TextEdit::singleline(&mut form.branch)
-                        .hint_text("the default branch")
-                        .desired_width(340.0),
-                );
-                ui.end_row();
-            });
-            ui.add_space(10.0);
-            ui.horizontal(|ui| {
-                let ready = !form.url.trim().is_empty();
-                if ui.add_enabled(ready, egui::Button::new("Add")).clicked() {
-                    answer = Some(true);
-                }
-                if ui.button("Cancel").clicked() {
-                    answer = Some(false);
-                }
-            });
-        });
-        if let Some(add) = answer {
-            let form = self.adding.take().unwrap_or_default();
-            if add {
-                let branch = form.branch.trim();
-                self.start(
-                    context,
-                    Job::AddFromGit {
-                        url: form.url.trim().to_string(),
-                        branch: (!branch.is_empty()).then(|| branch.to_string()),
-                    },
-                );
-            }
-        }
-    }
-
     fn log_view(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
             ui.label(RichText::new("Log").strong());
@@ -986,7 +898,10 @@ impl App {
                     }
                 });
                 ui.add_space(6.0);
+                self.outcome_banner(ui);
                 let mut create: Option<PathBuf> = None;
+                let mut ue4ss_action = None;
+                let idle = self.running.is_none();
                 egui::Grid::new("checks")
                     .num_columns(3)
                     .spacing([12.0, 8.0])
@@ -1000,7 +915,8 @@ impl App {
                                 Status::Optional => ("–", Color32::GRAY),
                             };
                             ui.colored_label(color, RichText::new(icon).strong());
-                            ui.label(RichText::new(check.name).strong());
+                            ui.label(RichText::new(check.name).strong())
+                                .on_hover_text(check.help);
                             ui.vertical(|ui| {
                                 ui.label(&check.summary);
                                 if let Some(path) = &check.path {
@@ -1020,10 +936,18 @@ impl App {
                                         create = Some(folder.clone());
                                     }
                                 }
+                                if check.name == "UE4SS" {
+                                    ue4ss_action =
+                                        ue4ss_action.or(ue4ss_buttons(ui, &self.ue4ss, idle));
+                                }
                             });
                             ui.end_row();
                         }
                     });
+                if let Some(action) = ue4ss_action {
+                    let context = ui.ctx().clone();
+                    self.start(&context, Job::Ue4ss(action));
+                }
                 if let Some(folder) = create {
                     match std::fs::create_dir_all(&folder) {
                         Ok(()) => {
@@ -1109,27 +1033,6 @@ impl App {
                             }
                         });
                         ui.end_row();
-                        ui.label("Build folder");
-                        let default_build = display_path(&work::build_folder(&Settings::default()));
-                        path_field(ui, &mut editing.build, &default_build, Pick::Folder);
-                        ui.end_row();
-                        ui.label("Stub Unreal project");
-                        let default_project = display_path(&settings::default_project());
-                        path_field(
-                            ui,
-                            &mut editing.project,
-                            &default_project,
-                            Pick::File("uproject"),
-                        );
-                        ui.end_row();
-                        ui.label("Unreal Engine");
-                        path_field(
-                            ui,
-                            &mut editing.engine,
-                            settings::DEFAULT_ENGINE,
-                            Pick::Folder,
-                        );
-                        ui.end_row();
                     });
                 ui.add_space(10.0);
                 ui.horizontal(|ui| {
@@ -1193,10 +1096,6 @@ impl eframe::App for App {
         if self.confirming {
             let context = ui.ctx().clone();
             self.confirm_dialog(&context);
-        }
-        if self.adding.is_some() {
-            let context = ui.ctx().clone();
-            self.git_dialog(&context);
         }
     }
 }
@@ -1299,6 +1198,7 @@ impl Row<'_> {
                                  uninstalling it needs Force.",
                             );
                         }
+                        Origin::Imported => {}
                     }
                     if !installed.changed.is_empty() || !installed.missing.is_empty() {
                         chip(ui, "files changed", warn).on_hover_text(
@@ -1314,8 +1214,8 @@ impl Row<'_> {
                 }
                 if summary.folder.is_none() {
                     if summary.archive.is_some() {
-                        chip(ui, "kept as zip", Color32::GRAY).on_hover_text(
-                            "Kept as a zip in the mods folder: it can be installed and \
+                        chip(ui, "zip", Color32::GRAY).on_hover_text(
+                            "A zip in the mods folder: it can be installed and \
                              uninstalled, not rebuilt",
                         );
                     } else if self.installed {
@@ -1325,9 +1225,9 @@ impl Row<'_> {
                         );
                     }
                 }
-                if summary.git.is_some() {
-                    chip(ui, "git", Color32::GRAY)
-                        .on_hover_text(summary.git.clone().unwrap_or_default());
+                // an imported mod: what couldn't be checked about it
+                if !summary.cautions.is_empty() {
+                    chip(ui, "imported", warn).on_hover_text(summary.cautions.join("\n\n"));
                 }
                 let accent = ui.visuals().selection.bg_fill;
                 match (self.installed, self.ticked) {
@@ -1384,6 +1284,81 @@ fn unmanaged_details(ui: &mut egui::Ui, item: &Unmanaged, thumbnails: &mut Thumb
     for file in &item.files {
         ui.monospace(file);
     }
+}
+
+/// The buttons for UE4SS, by what's installed: install it; disable or enable it; remove the one
+/// the tools installed. Returns what was clicked.
+fn ue4ss_buttons(
+    ui: &mut egui::Ui,
+    installed: &Option<ue4ss::Installed>,
+    idle: bool,
+) -> Option<work::Ue4ssAction> {
+    use work::Ue4ssAction;
+    let installed = installed.as_ref()?;
+    let mut clicked = None;
+    ui.horizontal(|ui| {
+        let mut button = |ui: &mut egui::Ui, text: &str, hint: &str, action: Ue4ssAction| {
+            if ui
+                .add_enabled(idle, egui::Button::new(text))
+                .on_hover_text(hint)
+                .clicked()
+            {
+                clicked = Some(action);
+            }
+        };
+        let disabled = match installed {
+            ue4ss::Installed::None => {
+                button(
+                    ui,
+                    &format!("Install UE4SS {}", ue4ss::VERSION),
+                    "Download the build mods' C++ is made for (checked against its checksum) and \
+                     install it into the game",
+                    Ue4ssAction::Install,
+                );
+                return;
+            }
+            ue4ss::Installed::Tools { disabled, .. } => *disabled,
+            ue4ss::Installed::Other {
+                pinned, disabled, ..
+            } => {
+                if *pinned {
+                    button(
+                        ui,
+                        "Let the tools manage it",
+                        "It's the build the tools install: they take it over as it is, so they \
+                         can remove it later",
+                        Ue4ssAction::Install,
+                    );
+                }
+                *disabled
+            }
+        };
+        if disabled {
+            button(
+                ui,
+                "Enable",
+                "Start the game with UE4SS again",
+                Ue4ssAction::Enable,
+            );
+        } else {
+            button(
+                ui,
+                "Disable",
+                "Start the game without UE4SS, as after a game update it can't handle yet; mods' \
+                 Lua and C++ don't run",
+                Ue4ssAction::Disable,
+            );
+        }
+        if matches!(installed, ue4ss::Installed::Tools { .. }) {
+            button(
+                ui,
+                "Remove",
+                "Remove the UE4SS the tools installed: only its files, and only those unchanged",
+                Ue4ssAction::Remove,
+            );
+        }
+    });
+    clicked
 }
 
 fn log_line(message: &Message) -> String {

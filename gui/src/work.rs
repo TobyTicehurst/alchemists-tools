@@ -9,6 +9,7 @@ use alchemists_core::game::Game;
 use alchemists_core::mods::{Applied, Overview, Workspace};
 use alchemists_core::report::{self, Message};
 use alchemists_core::settings::Settings;
+use alchemists_core::ue4ss;
 use eframe::egui;
 
 pub enum Job {
@@ -16,10 +17,18 @@ pub enum Job {
     Refresh,
     /// Make the installed mods exactly these (see `Workspace::apply`).
     Apply { wanted: Vec<String>, force: bool },
-    /// Clone a git repository of mods into the mods folder.
-    AddFromGit { url: String, branch: Option<String> },
-    /// Pull the repository a mod was added from.
-    UpdateFromGit { name: String },
+    /// Import a mod made without this tool (see `alchemists_core::import`).
+    Import { zip: PathBuf },
+    /// Install, remove, disable or enable UE4SS (see `alchemists_core::ue4ss`).
+    Ue4ss(Ue4ssAction),
+}
+
+#[derive(Clone, Copy)]
+pub enum Ue4ssAction {
+    Install,
+    Remove,
+    Disable,
+    Enable,
 }
 
 /// What a job found: always the mods and the setup as they are afterwards.
@@ -30,6 +39,8 @@ pub struct Done {
     pub applied: Option<Result<Applied, String>>,
     /// For the other jobs that change something: what was done, or why it failed.
     pub action: Option<Result<String, String>>,
+    /// UE4SS in the game folder, if the game was found.
+    pub ue4ss: Option<ue4ss::Installed>,
 }
 
 pub enum Event {
@@ -40,12 +51,21 @@ pub enum Event {
 /// A job running on its own thread.
 pub struct Running {
     pub applying: bool,
+    /// What it's doing, for the window to say.
+    pub doing: &'static str,
     receiver: Receiver<Event>,
 }
 
 impl Running {
     pub fn start(job: Job, settings: Settings, context: egui::Context) -> Self {
         let applying = matches!(job, Job::Apply { .. });
+        let doing = match &job {
+            Job::Refresh => "Reading the mods…",
+            Job::Apply { .. } => "Building and installing…",
+            Job::Import { .. } => "Importing…",
+            Job::Ue4ss(Ue4ssAction::Install) => "Installing UE4SS…",
+            Job::Ue4ss(_) => "Changing UE4SS…",
+        };
         let (sender, receiver) = mpsc::channel();
         std::thread::spawn(move || {
             let messages = sender.clone();
@@ -60,7 +80,11 @@ impl Running {
             let _ = sender.send(Event::Done(Box::new(done)));
             context.request_repaint();
         });
-        Running { applying, receiver }
+        Running {
+            applying,
+            doing,
+            receiver,
+        }
     }
 
     /// The events since last asked, and whether the job stopped without finishing (it panicked).
@@ -116,32 +140,51 @@ fn run(job: Job, settings: &Settings) -> Done {
                 workspace.apply(&wanted, force).map_err(text)
             })
         }
-        Job::AddFromGit { url, branch } => {
+        Job::Ue4ss(wanted) => {
+            let game = &workspace.game;
+            let done = if !game.paks().is_dir() {
+                Err(anyhow::anyhow!(
+                    "the game wasn't found: set its folder in Setup"
+                ))
+            } else {
+                match wanted {
+                    Ue4ssAction::Install => ue4ss::install(game, None)
+                        .map(|_| format!("UE4SS {} is installed.", ue4ss::VERSION)),
+                    Ue4ssAction::Remove => {
+                        ue4ss::remove(game, false).map(|_| "UE4SS is removed.".to_string())
+                    }
+                    Ue4ssAction::Disable => ue4ss::set_enabled(game, false)
+                        .map(|_| "UE4SS is disabled: the game starts without it.".to_string()),
+                    Ue4ssAction::Enable => ue4ss::set_enabled(game, true)
+                        .map(|_| "UE4SS is enabled again.".to_string()),
+                }
+            };
+            action = Some(done.map_err(text));
+        }
+        Job::Import { zip } => {
             action = Some(
                 workspace
-                    .add_from_git(&url, branch.as_deref())
-                    .map(|names| {
+                    .import(&zip, None, None)
+                    .map(|imported| {
                         format!(
-                            "Added {} from git: tick to install, then Confirm.",
-                            names.join(", ")
+                            "Imported {} as best it could be: tick to install, then Confirm. \
+                             Read its cautions first (in its details).",
+                            imported.name
                         )
                     })
-                    .map_err(text),
-            )
-        }
-        Job::UpdateFromGit { name } => {
-            action = Some(
-                workspace
-                    .update_from_git(&name)
-                    .map(|_| format!("Updated {name} from git: Confirm installs the new version."))
                     .map_err(text),
             )
         }
     }
     Done {
         overview: workspace.overview().map_err(text),
-        checks: environment::checks(settings),
+        checks: environment::player_checks(settings),
         applied,
         action,
+        ue4ss: workspace
+            .game
+            .paks()
+            .is_dir()
+            .then(|| ue4ss::installed(&workspace.game)),
     }
 }

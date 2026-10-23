@@ -5,24 +5,38 @@ files, package content made in Unreal, and build, install and share mods.
 
 ## Install
 
-Install [Rust](https://rustup.rs/), then:
+Download `alchemists-tools-setup.exe` from the [latest release](https://github.com/TobyTicehurst/alchemists-tools/releases/latest)
+and run it. It downloads that release's files and checks them against the checksum built into it, then:
+- puts the GUI, the command line and the game's mappings in `%LOCALAPPDATA%\Programs\AlchemistsTools`;
+- adds that folder to your PATH, so `alchemists-tools` works in any new terminal;
+- adds Alchemist's Tools to the Start menu, and to Windows' Installed apps, where it uninstalls.
+
+It then offers to install UE4SS into the game, which mods with Lua or C++ need (the build they're made for, checked
+against its checksum; Setup in the GUI does the same later). It needs no administrator rights. Run a newer release's
+installer to update; uninstalling keeps your mods folder, settings and UE4SS. On first use, the tools download `oo2core_9_win64.dll` (the Oodle decompressor the game's files need)
+next to themselves.
+
+To build from source instead, install [Rust](https://rustup.rs/), then:
 
 ```sh
 cargo install --locked --git https://github.com/TobyTicehurst/alchemists-tools alchemists-tools
 cargo install --locked --git https://github.com/TobyTicehurst/alchemists-tools alchemists-gui   # the desktop interface
 ```
 
-On first run, the tool downloads `oo2core_9_win64.dll` (the Oodle decompressor the game's
-files need) next to itself.
+Installed that way, the tools don't have the game's mappings: dump your own (below), or point the settings at the
+repository's `mappings/<build>.usmap`.
 
-## Dump the game's mappings (once per game update)
+## The game's mappings
 
-The tool needs a `.usmap` file describing the game's data layouts, dumped from the running game:
+The tools read the game's tables through its mappings, a `.usmap` file of the game's data layouts. The installer puts
+the mappings for the game's current Steam build beside the tools (`mappings/`), so players needn't make their own. After a game
+update, a new release brings the new build's. Until then, or to make mods, dump your own from the running game:
 
 1. Install [UE4SS](https://docs.ue4ss.com/) into `AlchemyFactory/Binaries/Win64/`.
 2. Start a brand new save. Once it has loaded, press **Ctrl + Numpad 6**.
 
-The file appears in `Binaries/Win64/ue4ss/`, where the tool finds it. If UE4SS came with AF Mod Loader, the key
+The file appears in `Binaries/Win64/ue4ss/`, where the tool finds it. The tools' own are used first when they're for
+the game's build. If UE4SS came with AF Mod Loader, the key
 does nothing at first: see [docs/examples/lua.md](docs/examples/lua.md), "Setting up UE4SS".
 
 ## Install mods with the GUI
@@ -42,18 +56,23 @@ marked, since they need care.
 
 **The mods folder** holds every mod's source, installed or not: unticking a mod uninstalls it from the game, and it
 stays in the list, unticked. A mod installed from somewhere else is kept there as a zip when it's unticked, so it can
-be ticked again. **Add from git** clones a repository of mods (or of one mod) into the mods folder, and a mod added
-that way has **Update from git**.
+be ticked again. Put a mod's zip there (a download from Nexus Mods or Thunderstore) to list it.
 
-**Setup** shows whether the game, UE4SS, the `.usmap` and the Unreal parts are found, and where the mods folders are.
+**Import a zip** takes a mod made without this tool, such as an older download from a mod site, as far as it can
+safely: it refuses zips it can't place safely, and marks what it can't check (see
+[docs/MODDING.md](docs/MODDING.md), "Mods made without this tool").
+
+**Setup** shows what playing with mods needs: whether the game, UE4SS and the mappings are found, and where the mods
+folders are. It installs UE4SS, and disables it after a game update it can't handle yet. (`alchemists-tools check` also shows what making mods needs.)
 The settings are shared with the command line, and everything the GUI does is a command too:
 
 | GUI | Command |
 |---|---|
 | The mod list | `alchemists-tools mod list` |
 | Confirm | `alchemists-tools mod apply <names>...` (the mods to have installed) |
-| Add from git, Update from git | `alchemists-tools mod add <url>`, `alchemists-tools mod update <name>` |
+| Import a zip (a mod made without this tool) | `alchemists-tools mod import <zip>` |
 | Setup | `alchemists-tools check`, `alchemists-tools settings` |
+| Setup's UE4SS buttons | `alchemists-tools ue4ss install`, `remove`, `disable`, `enable` |
 
 ## Extract the game's data
 
@@ -121,8 +140,7 @@ alchemists-tools mod build MyMod                       # -> build/MyMod/, laid o
 alchemists-tools mod install MyMod --with-dependencies
 alchemists-tools mod uninstall MyMod [--force]
 alchemists-tools mod apply MyMod OtherMod             # exactly these installed: all at once, or nothing changes
-alchemists-tools mod add https://github.com/someone/SomeMods   # clone mods from git into the mods folder
-alchemists-tools mod dist MyMod                        # -> build/MyMod_<version>.zip, and a README beside it
+alchemists-tools mod dist MyMod                        # -> build/MyMod_<version>.zip: for Nexus, Thunderstore, or by hand
 alchemists-tools mod list
 alchemists-tools mod scan                              # every mod in the game folder, and its files
 ```

@@ -3,7 +3,7 @@
 ## Building
 
 ```sh
-cargo build --release    # -> target/release/alchemists-tools, and alchemists-gui
+cargo build --release    # -> target/release/alchemists-tools, alchemists-gui and alchemists-tools-setup
 cargo test
 cargo test --release -- --ignored   # also the tests that need the installed game (core/tests/)
 cargo clippy
@@ -22,6 +22,8 @@ retoc doesn't build against the latest jmap). Keep `Cargo.lock` committed, and i
 | `ue4ss/`      | Lua built into the program: the probe template and the AlchemistsLibrary mod |
 | `calculator/` | Production and demand calculations *(not yet ported)*     |
 | `gui/`        | Desktop interface (egui): the mod list, Confirm (`mod apply`), Setup |
+| `installer/`  | `alchemists-tools-setup.exe`: downloads a release's files, adds the PATH, Start menu and Installed apps |
+| `mappings/`   | The game's mappings for each Steam build supported, shipped beside the tools (not in them) |
 
 In `core/src/`:
 
@@ -37,6 +39,8 @@ In `core/src/`:
 | `files` | Manifests, the checks before a file in the game folder is deleted or replaced, and transactions (all or nothing) |
 | `report` | Where messages go: printed, or collected by the GUI with the mods each is about |
 | `git` | Cloning and pulling mods' git repositories (`mod add`, `mod update`) |
+| `sharing` | `mod dist`: one zip for Thunderstore, Nexus and installing by hand |
+| `import` | `mod import`: mods made without this tool, placed safely or refused (a best effort, not kept up long term) |
 | `settings`, `environment` | The saved settings (shared by the command line and the GUI); finding the game, UE4SS and the rest |
 | `probe` | UE4SS probe mods |
 | `stub` | Setting up the stub Unreal project |
@@ -131,3 +135,40 @@ Things learnt the hard way, writing:
   - Rust and Unreal type names (`u8`, `i32`, `fstring`, `fname`);
   - file formats (`usmap`, `uasset`, `uexp`, `locres`, `pak`).
 - **Game data is never committed.** It's extracted on each user's machine; `data/` is ignored.
+
+## Releasing
+
+Set the version in `Cargo.toml`, commit, then push a tag of it: `git tag v0.2.0 && git push origin v0.2.0`. The
+workflow `.github/workflows/release.yml` then tests and builds everything, and publishes a release with:
+- `alchemists-tools-<version>-windows.zip`: the GUI, the command line, README, LICENSE and `mappings/`;
+- `alchemists-tools-setup.exe`: the installer players download. It's built with the zip's SHA-256
+  (`ALCHEMISTS_PAYLOAD_SHA256`), downloads the zip from the release of its own version, and refuses one that differs.
+
+To try an installer before releasing, make the zip by hand (the same files, `mappings/` included) and run
+`alchemists-tools-setup --payload <zip> --folder <somewhere>`; `--uninstall --folder <somewhere>` removes it again,
+PATH entry and all. An installer built without the checksum installs only a zip it's given.
+
+The release also carries a copy of the UE4SS build the tools pin (`core/src/ue4ss.rs`), fetched from UE4SS's own
+release and checked by the workflow, so that it stays downloadable if UE4SS prunes old experimental builds.
+
+Players download an unsigned exe, so Windows SmartScreen warns about it until it's known (or signed with a code
+signing certificate).
+
+### After a game update
+
+The tools ship the game's mappings for each Steam build they support (`mappings/<build>.usmap`, read from beside the
+tools by `core/src/mappings.rs`), so players needn't dump their own:
+
+1. Dump new mappings: start a new save with UE4SS installed and press Ctrl + Numpad 6.
+2. Copy them to `mappings/<build>.usmap`, with the game's new Steam build (`alchemists-tools check` shows it).
+3. Run `alchemists-tools update`, and the tests with `--ignored`, then release.
+
+Each file is about 2.4 MB (Git stores about 0.8 MB of it). Keep the newest build and the one before, for players
+whose game hasn't updated yet, and delete older ones.
+
+### Changing the UE4SS build
+
+C++ mods are compiled against an exact UE4SS build, so moving to another is a release of its own: rebuild the C++
+mods against the new build, then set `VERSION`, `ZIP`, `ZIP_SHA256` (the zip's) and `DLL_SHA256` (its `UE4SS.dll`'s)
+in `core/src/ue4ss.rs`, and release. Players then install it from Setup: the tools replace their own UE4SS's
+unchanged files.

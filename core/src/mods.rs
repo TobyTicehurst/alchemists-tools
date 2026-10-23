@@ -46,8 +46,8 @@ use crate::text::Localizer;
 use crate::unpack::Assets;
 
 const STEAM_APP: &str = "3669570";
-const PAK_FOLDER: &[&str] = &["AlchemyFactory", "Content", "Paks", "~mods"];
-const UE4SS_FOLDER: &[&str] = &["AlchemyFactory", "Binaries", "Win64", "ue4ss", "Mods"];
+pub(crate) const PAK_FOLDER: &[&str] = &["AlchemyFactory", "Content", "Paks", "~mods"];
+pub(crate) const UE4SS_FOLDER: &[&str] = &["AlchemyFactory", "Binaries", "Win64", "ue4ss", "Mods"];
 const RECORD: &str = "installed-mods.json";
 /// The example edit file `mod new` writes, which applies nothing as it is.
 const EXAMPLE_EDITS: &str = include_str!("../../templates/example-edits.json");
@@ -64,6 +64,7 @@ const MOD_FIELDS: &[&str] = &[
     "author",
     "contact",
     "homepage",
+    "team",
     "dependencies",
     "game-build",
     "detours",
@@ -92,7 +93,7 @@ pub fn parse_version(text: &str, at: &str) -> Result<Version> {
     }
 }
 
-fn version_text(version: Version) -> String {
+pub(crate) fn version_text(version: Version) -> String {
     format!("{}.{}.{}", version.0, version.1, version.2)
 }
 
@@ -130,7 +131,7 @@ pub struct Dependency {
     pub version: Option<Version>,
 }
 
-fn is_name(text: &str) -> bool {
+pub(crate) fn is_name(text: &str) -> bool {
     text.chars()
         .next()
         .is_some_and(|character| character.is_ascii_alphabetic())
@@ -237,6 +238,9 @@ pub struct Entry {
     pub detours: Vec<String>,
     /// Game functions it hooks through UE4SS, as found in its Lua (`RegisterHook`) and DLL.
     pub hooks: Vec<String>,
+    /// What couldn't be checked about it, warned about whenever it's installed (an imported mod's:
+    /// see [`crate::import`]).
+    pub cautions: Vec<String>,
     /// Its new craft types: `Mod:Name` -> number.
     pub craft_type_numbers: IndexMap<String, u8>,
     /// Its edit files (craft type names already numbers): (label, contents).
@@ -271,6 +275,8 @@ pub struct Mod {
     pub author: String,
     pub contact: String,
     pub homepage: String,
+    /// The Thunderstore team that publishes it (see [`crate::sharing`]).
+    pub team: String,
     pub dependencies: Vec<String>,
     pub requires: Vec<Dependency>,
     /// The game's Steam build it's made for, if mod.json says.
@@ -414,13 +420,21 @@ impl Mod {
             None => None,
             Some(Value::String(build)) if is_build(build) => Some(build.clone()),
             Some(other) => bail!(
-                "{at}: game-build {other} must be the game's Steam build number, as a string (e.g.                  \"25991404\"; alchemists-tools check shows the installed one)"
+                "{at}: game-build {other} must be the game's Steam build number, as a string (e.g. \
+                 \"25991404\"; alchemists-tools check shows the installed one)"
             ),
         };
         let detours = match fields.get("detours") {
             None => None,
             listed => Some(string_list(listed, &at, "detours")?),
         };
+        let team = text("team", "");
+        if !team.is_empty() && !crate::sharing::is_team(&team) {
+            bail!(
+                "{at}: team {team:?} must be a Thunderstore team name: letters, digits and _, not \
+                 starting or ending with _"
+            );
+        }
         let craft_types = fields
             .get("craft-types")
             .and_then(Value::as_object)
@@ -517,6 +531,7 @@ impl Mod {
             author: text("author", ""),
             contact: text("contact", ""),
             homepage: text("homepage", ""),
+            team,
             name,
             version,
             dependencies,
@@ -572,12 +587,22 @@ fn entry_from_manifest(name: &str, manifest: &Manifest) -> Entry {
         new_buildings: manifest.new_buildings.clone(),
         detours: manifest.detours.clone(),
         hooks: manifest.hooks.clone(),
+        cautions: manifest.cautions.clone(),
         ..Entry::default()
     }
 }
 
+/// The install record of a game folder: the mods installed in it (empty if none are).
+pub fn installed_record(game: &Game) -> Result<Record> {
+    let path = join(&game.root, PAK_FOLDER).join(RECORD);
+    if !path.exists() {
+        return Ok(Record::default());
+    }
+    Ok(serde_json::from_value(read_json(&path)?)?)
+}
+
 /// Stop if the game is running: it holds the files mods replace.
-fn check_game_closed() -> Result<()> {
+pub(crate) fn check_game_closed() -> Result<()> {
     if crate::environment::game_running() {
         bail!("the game is running: close it first (it holds the files mods replace)");
     }
@@ -645,7 +670,7 @@ impl Workspace {
         }
     }
 
-    fn schemas(&self) -> Result<&Schemas> {
+    pub(crate) fn schemas(&self) -> Result<&Schemas> {
         if !self.usmap.is_file() {
             bail!(
                 "no .usmap mappings{}: dump them with UE4SS (Ctrl + Numpad 6 in a new save), or \
@@ -670,7 +695,7 @@ impl Workspace {
         Ok(self.assets.get().unwrap())
     }
 
-    fn game_for_edits(&self) -> Result<edits::Game<'_>> {
+    pub(crate) fn game_for_edits(&self) -> Result<edits::Game<'_>> {
         let assets = self.assets()?;
         if self.localizer.get().is_none() {
             let _ = self
@@ -857,7 +882,6 @@ impl Workspace {
         manifest: Option<&Manifest>,
         force: bool,
     ) -> Result<()> {
-        use std::io::Write;
         let name = &entry.name;
         if self.archives().contains_key(name) {
             return Ok(());
@@ -909,21 +933,14 @@ impl Workspace {
             .collect::<Result<_>>()?;
         std::fs::create_dir_all(mods)?;
         let path = mods.join(format!("{name}_{}.zip", entry.version));
-        // written whole beside it first, so a failure never leaves half a zip that looks like a mod
-        let part = path.with_extension("zip.part");
-        let mut zip = zip::ZipWriter::new(std::fs::File::create(&part)?);
-        let options = zip::write::SimpleFileOptions::default()
-            .compression_method(zip::CompressionMethod::Deflated);
+        let mut contents = vec![];
         for file in &kept.files {
-            zip.start_file(file.path.as_str(), options)?;
-            zip.write_all(&std::fs::read(files.resolve(&file.path)?)?)?;
+            contents.push((
+                file.path.clone(),
+                std::fs::read(files.resolve(&file.path)?)?,
+            ));
         }
-        zip.start_file(GameFiles::manifest_path(name), options)?;
-        zip.write_all((serde_json::to_string_pretty(&kept)? + "\n").as_bytes())?;
-        zip.start_file(KEPT_ENTRY, options)?;
-        zip.write_all((serde_json::to_string_pretty(entry)? + "\n").as_bytes())?;
-        zip.finish()?;
-        std::fs::rename(&part, &path)?;
+        write_mod_zip(&path, &kept, entry, contents)?;
         note!(
             "kept a copy of {name} as {}, to install it again",
             display_path(&path)
@@ -968,11 +985,7 @@ impl Workspace {
     }
 
     pub fn record(&self) -> Result<Record> {
-        let path = self.record_path();
-        if !path.exists() {
-            return Ok(Record::default());
-        }
-        Ok(serde_json::from_value(read_json(&path)?)?)
+        installed_record(&self.game)
     }
 
     /// Write the install record, as part of a change to the game folder.
@@ -1059,7 +1072,7 @@ impl Workspace {
 
     /// A dependency, from the mods folder (built into an entry) or else from the installed mods,
     /// checked against its version requirement.
-    fn find_dependency(&self, dependency: &Dependency, at: &str) -> Result<Entry> {
+    pub(crate) fn find_dependency(&self, dependency: &Dependency, at: &str) -> Result<Entry> {
         // the tool carries its own Lua library: written when missing, updated when older
         if dependency.name == "AlchemistsLibrary" {
             crate::probe::write_library(&self.library_home())?;
@@ -1217,7 +1230,7 @@ fn craft_type_number(
 }
 
 /// UE4SS's own mods and modules (what its release ships), which aren't game mods.
-const UE4SS_OWN: &[&str] = &[
+pub(crate) const UE4SS_OWN: &[&str] = &[
     "BPML_GenericFunctions",
     "BPModLoaderMod",
     "CheatManagerEnablerMod",
@@ -1412,7 +1425,7 @@ fn required_modules(script: &str) -> Vec<String> {
 
 /// The text each call of `function` in a Lua script is given first, when that's a string:
 /// `function("text", ...)` or `function "text"`.
-fn string_arguments(script: &str, function: &str) -> Vec<String> {
+pub(crate) fn string_arguments(script: &str, function: &str) -> Vec<String> {
     let mut modules = vec![];
     let mut remaining = script;
     while let Some(at) = remaining.find(function) {
@@ -1433,7 +1446,7 @@ fn string_arguments(script: &str, function: &str) -> Vec<String> {
 
 /// The reflected functions (`/Script/Module.Class:Function`) a DLL names, as UTF-16 (C++'s
 /// `STR("...")`) or as bytes.
-fn function_paths(dll: &[u8]) -> Vec<String> {
+pub(crate) fn function_paths(dll: &[u8]) -> Vec<String> {
     static PATTERN: OnceLock<regex::Regex> = OnceLock::new();
     let pattern = PATTERN.get_or_init(|| {
         regex::Regex::new(r"/Script/[A-Za-z0-9_]+\.[A-Za-z0-9_]+:[A-Za-z0-9_]+").unwrap()
@@ -1515,7 +1528,8 @@ impl Workspace {
             .iter()
             .map(|(key, files)| Ok((key.clone(), resolve(files)?)))
             .collect::<Result<_>>()?;
-        let schemas = self.schemas()?;
+        // the game's layouts (the .usmap) are only read when the mod needs them: for its tables,
+        // craft types or cooked content, not for a mod of only Lua or C++
         let mut machine_types: IndexMap<String, u8> = IndexMap::new();
         for (asset, value) in &mod_.craft_types {
             let value =
@@ -1524,7 +1538,10 @@ impl Workspace {
                 Value::String(text) => text.clone(),
                 other => other.to_string(),
             };
-            machine_types.insert(asset.clone(), content::craft_type_number(&text, schemas)?);
+            machine_types.insert(
+                asset.clone(),
+                content::craft_type_number(&text, self.schemas()?)?,
+            );
         }
         let current_build = game_build(&self.game);
         if let (Some(made_for), Some(current)) = (&mod_.game_build, &current_build) {
@@ -1629,7 +1646,8 @@ impl Workspace {
                 note!("   craft type {old} -> {value} in {asset}");
             }
             let utoc = paks.join(format!("{}.utoc", content_container(name)));
-            let packaged = content::package(&utoc, &staged, &self.game, schemas, &machine_types)?;
+            let packaged =
+                content::package(&utoc, &staged, &self.game, self.schemas()?, &machine_types)?;
             for (package, components) in &packaged.components {
                 note!("   {package}:");
                 for component in components {
@@ -1798,11 +1816,15 @@ impl Workspace {
             }
         }
         // Craft types past Max: the recipes and the machines must agree
-        let named: HashSet<u8> = schemas
-            .enums
-            .get("EBeltTDCraftType")
-            .map(|values| values.keys().filter_map(|key| key.parse().ok()).collect())
-            .unwrap_or_default();
+        let named: HashSet<u8> = if built.is_some() || !machine_types.is_empty() {
+            self.schemas()?
+                .enums
+                .get("EBeltTDCraftType")
+                .map(|values| values.keys().filter_map(|key| key.parse().ok()).collect())
+                .unwrap_or_default()
+        } else {
+            HashSet::new()
+        };
         let mut machines: HashSet<u8> = machine_types.values().copied().collect();
         machines.extend(
             needed
@@ -1941,10 +1963,20 @@ impl Workspace {
     // --- merging installed mods ---
 
     fn report_clashes(&self, order: &[String], mods: &IndexMap<String, Entry>) -> Result<()> {
-        let assets = self.assets()?;
-        let schemas = self.schemas()?;
+        // the game's tables (and the .usmap to read them) only if a mod edits tables
+        let edits_tables = order
+            .iter()
+            .any(|name| !mods[name].edits.is_empty() || !mods[name].optional_edits.is_empty());
+        let game_tables = if edits_tables {
+            Some((self.assets()?, self.schemas()?))
+        } else {
+            None
+        };
         let mut game_rows: HashMap<String, HashSet<String>> = HashMap::new();
         let mut is_game_row = |table: &str, row: &str| -> bool {
+            let Some((assets, schemas)) = game_tables else {
+                return false;
+            };
             game_rows
                 .entry(table.to_string())
                 .or_insert_with(|| {
@@ -2229,6 +2261,11 @@ impl Workspace {
     /// a change to the game folder.
     fn merge(&self, record: &mut Record, force: bool, transaction: &mut Transaction) -> Result<()> {
         let order = load_order(&record.mods)?;
+        for name in &order {
+            for caution in &record.mods[name].cautions {
+                report::warning_about(std::slice::from_ref(name), caution.clone());
+            }
+        }
         self.report_clashes(&order, &record.mods)?;
         let present: HashSet<String> = order.iter().cloned().collect();
         let sources: Vec<edits::Source> = order
@@ -2515,7 +2552,11 @@ impl Workspace {
         )
     }
 
-    fn manifest_for(info: &Entry, installed_by: &str, files: Vec<FileRecord>) -> Manifest {
+    pub(crate) fn manifest_for(
+        info: &Entry,
+        installed_by: &str,
+        files: Vec<FileRecord>,
+    ) -> Manifest {
         Manifest {
             name: info.name.clone(),
             title: info.title.clone(),
@@ -2527,6 +2568,7 @@ impl Workspace {
             new_buildings: info.new_buildings.clone(),
             detours: info.detours.clone(),
             hooks: info.hooks.clone(),
+            cautions: info.cautions.clone(),
             files,
         }
     }
@@ -3172,185 +3214,6 @@ impl Workspace {
         Ok(())
     }
 
-    // --- sharing ---
-
-    pub fn readme_for_zip(mod_: &Mod, info: &Entry) -> String {
-        let mut by_kind: IndexMap<&str, Vec<String>> = IndexMap::new();
-        for dependency in &mod_.requires {
-            let heading = match dependency.kind {
-                Kind::Required | Kind::Unordered => "Requires",
-                Kind::Recommended => "Recommended",
-                Kind::Optional => "Works with",
-                Kind::Incompatible => "Doesn't work with",
-                Kind::HiddenOptional => continue,
-            };
-            by_kind
-                .entry(heading)
-                .or_default()
-                .push(requirement_text(dependency));
-        }
-        let mut lines = vec![format!(
-            "{} {}{}",
-            mod_.title,
-            mod_.version,
-            if mod_.author.is_empty() {
-                String::new()
-            } else {
-                format!(" by {}", mod_.author)
-            }
-        )];
-        if !mod_.description.is_empty() {
-            lines.extend([String::new(), mod_.description.clone()]);
-        }
-        if !mod_.homepage.is_empty() {
-            lines.push(format!("Website: {}", mod_.homepage));
-        }
-        if !mod_.contact.is_empty() {
-            lines.push(format!("Contact: {}", mod_.contact));
-        }
-        lines.extend([
-            String::new(),
-            format!(
-                "Made for Alchemy Factory build {} (Steam). After a game update it may need a new \
-                version.",
-                info.game_build.as_deref().unwrap_or("(unknown)")
-            ),
-            String::new(),
-        ]);
-        for heading in ["Requires", "Recommended", "Works with", "Doesn't work with"] {
-            if let Some(names) = by_kind.get(heading) {
-                lines.push(format!("{heading}: {}", names.join(", ")));
-            }
-        }
-        lines.extend(["".into(), "INSTALL".into(), "".into()]);
-        if info.needs_ue4ss {
-            lines.extend([
-                "This mod needs UE4SS: https://github.com/UE4SS-RE/RE-UE4SS/releases".to_string(),
-                String::new(),
-            ]);
-        }
-        lines.extend([
-            "Extract this zip into the game's folder (Steam: right-click Alchemy Factory > Manage \
-            > Browse local"
-                .to_string(),
-            "files), so that its AlchemyFactory folder merges with the game's. Not into ~mods: \
-            the zip"
-                .to_string(),
-            "already holds the folders down to it. Then start the game.".to_string(),
-            String::new(),
-        ]);
-        let needed: Vec<&str> = mod_
-            .requires
-            .iter()
-            .filter(|dependency| dependency.kind.is_required())
-            .map(|dependency| dependency.name.as_str())
-            .collect();
-        if !info.tables.is_empty() {
-            lines.push("It replaces these game tables:".to_string());
-            lines.extend(info.tables.iter().map(|table| format!("   {table}")));
-            lines.extend([
-                "Another mod that replaces one of them can't be used at the same time, unless \
-                both are"
-                    .to_string(),
-                "installed with a tool that merges them.".to_string(),
-                String::new(),
-            ]);
-        }
-        if !info.save_edits.is_empty() {
-            lines.extend([
-                "It changes the save that new games start from, so it only affects games started \
-                with it"
-                    .to_string(),
-                "installed. Another mod that does the same can't be used at the same time, unless \
-                both are"
-                    .to_string(),
-                "installed with a tool that merges them.".to_string(),
-                String::new(),
-            ]);
-        }
-        if !info.tables.is_empty() && !needed.is_empty() {
-            lines.push(format!(
-                "Its tables already include the table changes of {}. After installing",
-                needed.join(", ")
-            ));
-            lines.push(
-                "those, delete their own table files, or they replace this mod's:".to_string(),
-            );
-            for name in &needed {
-                lines.push(format!(
-                    "   AlchemyFactory/Content/Paks/~mods/{}.pak, .ucas and .utoc",
-                    data_container(name)
-                ));
-            }
-            lines.extend(["Keep their other files.".to_string(), String::new()]);
-        }
-        lines.push("It adds these files:".to_string());
-        lines.extend(
-            info.data_files
-                .iter()
-                .chain(&info.files)
-                .map(|file| format!("   {file}")),
-        );
-        lines.extend(["".into(), "UNINSTALL".into(), "".into()]);
-        if !info.new_buildings.is_empty() {
-            lines.push(format!(
-                "First, in every save you want to keep, deconstruct every {}.",
-                info.new_buildings.join(", ")
-            ));
-            lines.extend([
-                "A save with one of these placed crashes the game once the mod is removed."
-                    .to_string(),
-                String::new(),
-            ]);
-        }
-        lines.extend([
-            "Delete the files listed above, and this one:".to_string(),
-            format!(
-                "   AlchemyFactory/Content/Paks/~mods/manifests/{}.json",
-                mod_.name
-            ),
-            format!("Or run: alchemists-tools mod uninstall {}", mod_.name),
-            String::new(),
-        ]);
-        lines.join("\r\n")
-    }
-
-    pub fn dist(&self, mod_: &Mod, build_folder: &Path, info: &Entry) -> Result<PathBuf> {
-        use std::io::Write;
-        let path = self
-            .build
-            .join(format!("{}_{}.zip", mod_.name, mod_.version));
-        let mut zip = zip::ZipWriter::new(std::fs::File::create(&path)?);
-        let options = zip::write::SimpleFileOptions::default()
-            .compression_method(zip::CompressionMethod::Deflated);
-        let mut listed = vec![];
-        for relative in info.data_files.iter().chain(&info.files) {
-            zip.start_file(relative, options)?;
-            let data = std::fs::read(build_folder.join(relative))?;
-            zip.write_all(&data)?;
-            let (size, sha256) = hash(&build_folder.join(relative))?;
-            listed.push(FileRecord {
-                path: relative.clone(),
-                size,
-                sha256,
-            });
-        }
-        // The mod names itself and its files, so a tool can tell it apart and remove it exactly
-        let manifest = Self::manifest_for(info, "zip", listed);
-        zip.start_file(GameFiles::manifest_path(&mod_.name), options)?;
-        zip.write_all((serde_json::to_string_pretty(&manifest)? + "\n").as_bytes())?;
-        zip.finish()?;
-        note!("zipped -> {}", display_path(&path));
-        // Install instructions and the description go beside the zip, not in it: mod sites show
-        // them on the mod's page
-        let readme = self
-            .build
-            .join(format!("{}_{}_README.txt", mod_.name, mod_.version));
-        std::fs::write(&readme, Self::readme_for_zip(mod_, info))?;
-        note!("README -> {}", display_path(&readme));
-        Ok(path)
-    }
-
     pub fn new_mod(&self, name: &str) -> Result<()> {
         if !is_name(name) || name == MERGED || name == MERGED_SAVE {
             bail!("a mod name is letters and digits, starting with a letter");
@@ -3364,7 +3227,7 @@ impl Workspace {
         }
         std::fs::create_dir_all(folder.join("edits"))?;
         let mut fields = json!({"name": name, "title": name, "version": "0.1.0", "description": "",
-                                "author": "", "homepage": "", "dependencies": []});
+                                "author": "", "homepage": "", "team": "", "dependencies": []});
         // made for the game as it is now
         if let Some(build) = game_build(&self.game) {
             fields["game-build"] = json!(build);
@@ -3532,7 +3395,8 @@ impl Workspace {
             problems.push((
                 needing.clone(),
                 format!(
-                    "{} need(s) UE4SS, and it isn't installed in {}",
+                    "{} need(s) UE4SS, and it isn't installed in {}: install it (Setup in the \
+                     GUI, or alchemists-tools ue4ss install)",
                     listed(&names),
                     display_path(&self.game.root)
                 ),
@@ -3582,7 +3446,7 @@ impl Workspace {
         }
         for archive in &from_archives {
             let name = &archive.manifest.name;
-            for file in &archive.manifest.files {
+            for file in &archive.install_manifest().files {
                 if let Some(other) = claimed.insert(file.path.clone(), name.clone()) {
                     problems.push((
                         vec![other.clone(), name.clone()],
@@ -3593,7 +3457,7 @@ impl Workspace {
             let taken = Self::files_not_free(
                 &files,
                 name,
-                &archive.manifest.files,
+                &archive.install_manifest().files,
                 &record,
                 &staying,
                 &freed,
@@ -3676,7 +3540,7 @@ impl Workspace {
         }
         for archive in &from_archives {
             let mut zip = zip::ZipArchive::new(std::fs::File::open(&archive.path)?)?;
-            for file in &archive.manifest.files {
+            for file in &archive.install_manifest().files {
                 let mut contents = vec![];
                 std::io::Read::read_to_end(
                     &mut zip.by_name(&file.path).with_context(|| {
@@ -3693,7 +3557,7 @@ impl Workspace {
                     );
                 }
             }
-            self.write_manifest(&mut transaction, &archive.manifest)?;
+            self.write_manifest(&mut transaction, &archive.install_manifest())?;
             note!(
                 "installing {} from {}",
                 archive.manifest.name,
@@ -3814,6 +3678,7 @@ impl Workspace {
                 hooks: manifest.hooks.clone(),
                 tables: manifest.tables.clone(),
                 new_buildings: manifest.new_buildings.clone(),
+                cautions: manifest.cautions.clone(),
                 ..Summary::new(&name)
             });
             if summary.folder.is_some() {
@@ -3843,15 +3708,16 @@ impl Workspace {
             summary.installed = Some(Installed {
                 version: manifest.version.clone(),
                 game_build: manifest.game_build.clone(),
-                origin: if manifest.installed_by == "zip" {
-                    Origin::Zip
-                } else {
-                    Origin::Tool
+                origin: match manifest.installed_by.as_str() {
+                    "zip" => Origin::Zip,
+                    "import" => Origin::Imported,
+                    _ => Origin::Tool,
                 },
                 changed,
                 missing,
             });
             summary.hooks = manifest.hooks.clone();
+            summary.cautions = manifest.cautions.clone();
             summary.tables = manifest.tables.clone();
             summary.new_buildings = manifest.new_buildings.clone();
         }
@@ -4058,12 +3924,41 @@ pub fn mod_folders_in(folders: &[PathBuf]) -> Vec<PathBuf> {
     direct
 }
 
-/// In a zip kept by [`Workspace::keep_copy`]: the mod's install record entry.
-const KEPT_ENTRY: &str = "alchemists-tools-entry.json";
+/// Write a mod's zip as this tool reads it from a mods folder (see [`Archive`]): its files at their
+/// paths in the game folder, its file manifest and its install record entry. It's written whole
+/// beside `path` first, so a failure never leaves half a zip that looks like a mod.
+pub(crate) fn write_mod_zip(
+    path: &Path,
+    manifest: &Manifest,
+    entry: &Entry,
+    files: Vec<(String, Vec<u8>)>,
+) -> Result<()> {
+    use std::io::Write;
+    let part = path.with_extension("zip.part");
+    let mut zip = zip::ZipWriter::new(std::fs::File::create(&part)?);
+    let options = zip::write::SimpleFileOptions::default()
+        .compression_method(zip::CompressionMethod::Deflated);
+    for (relative, contents) in files {
+        zip.start_file(relative, options)?;
+        zip.write_all(&contents)?;
+    }
+    zip.start_file(GameFiles::manifest_path(&manifest.name), options)?;
+    zip.write_all((serde_json::to_string_pretty(manifest)? + "\n").as_bytes())?;
+    zip.start_file(ENTRY_FILE, options)?;
+    zip.write_all((serde_json::to_string_pretty(entry)? + "\n").as_bytes())?;
+    zip.finish()?;
+    std::fs::rename(&part, path).with_context(|| format!("writing {}", display_path(path)))?;
+    Ok(())
+}
 
-/// A mod kept as a zip in a folder of mods: one `mod dist` made (a download), or one this tool made
-/// when uninstalling a mod it had no folder for. It holds the mod's files as installed and its
-/// manifest; a kept one also its install record entry.
+/// In a mod's zip (one `mod dist`, `mod import` or [`Workspace::keep_copy`] made): the mod's
+/// install record entry, with the edits that are merged for it.
+pub(crate) const ENTRY_FILE: &str = "alchemists-tools-entry.json";
+
+/// A mod as a zip in a folder of mods: one `mod dist` made (a download), one `mod import` made, or
+/// one this tool kept when uninstalling a mod it had no folder for. It holds the mod's files as
+/// they're installed and its file manifest, and, unless it's from an older version of the tool,
+/// its install record entry.
 #[derive(Clone, Debug)]
 pub struct Archive {
     pub path: PathBuf,
@@ -4072,22 +3967,45 @@ pub struct Archive {
 }
 
 impl Archive {
-    /// Its install record entry: as kept, or else from its manifest (a mod's own zip, whose table
-    /// edits are in its own container).
+    /// The manifest of the mod as this tool installs it: with an install record entry, its edits
+    /// are merged, so its own data container and template save (for installing by hand) are left
+    /// out.
+    pub fn install_manifest(&self) -> Manifest {
+        let mut manifest = self.manifest.clone();
+        if let Some(entry) = &self.entry {
+            manifest
+                .files
+                .retain(|file| !entry.data_files.contains(&file.path));
+            if manifest.installed_by == "zip" {
+                manifest.installed_by = "alchemists-tools".to_string();
+            }
+        }
+        manifest
+    }
+
+    /// Its install record entry: as in the zip, or else from its manifest (a zip from an older
+    /// version of the tool, whose table edits are in its own container).
     fn entry(&self) -> Entry {
-        let name = &self.manifest.name;
+        let manifest = self.install_manifest();
         let mut entry = self
             .entry
             .clone()
-            .unwrap_or_else(|| entry_from_manifest(name, &self.manifest));
-        entry.files = self
-            .manifest
+            .unwrap_or_else(|| entry_from_manifest(&manifest.name, &manifest));
+        entry.files = manifest
             .files
             .iter()
             .map(|file| file.path.clone())
             .collect();
         entry
     }
+}
+
+/// The `manifest.json` at the top of a mod's zip (Thunderstore's, see [`crate::sharing`]), if it
+/// has one.
+pub(crate) fn read_root_manifest(path: &Path) -> Option<Value> {
+    let mut zip = zip::ZipArchive::new(std::fs::File::open(path).ok()?).ok()?;
+    let file = zip.by_name("manifest.json").ok()?;
+    serde_json::from_reader(file).ok()
 }
 
 /// A zip holding one mod's manifest (`manifests/<name>.json`), read; None for any other zip.
@@ -4104,7 +4022,7 @@ fn read_archive(path: &Path) -> Option<Archive> {
     };
     let manifest: Manifest = serde_json::from_reader(zip.by_name(manifest_name).ok()?).ok()?;
     let entry = zip
-        .by_name(KEPT_ENTRY)
+        .by_name(ENTRY_FILE)
         .ok()
         .and_then(|file| serde_json::from_reader(file).ok());
     Some(Archive {
@@ -4203,6 +4121,8 @@ pub enum Origin {
     /// By mods.py or an older version of this tool, without a manifest: nothing confirms its files
     /// are still its own.
     Unverified,
+    /// From a mod made without this tool, by `mod import`, as best it could.
+    Imported,
 }
 
 /// An installed mod, as installed.
@@ -4249,6 +4169,8 @@ pub struct Summary {
     /// The game tables its edits change, and the buildings it adds (once installed).
     pub tables: Vec<String>,
     pub new_buildings: Vec<String>,
+    /// What couldn't be checked about it (an imported mod's: see [`crate::import`]).
+    pub cautions: Vec<String>,
 }
 
 impl Summary {
@@ -4300,6 +4222,7 @@ impl Summary {
                      can't be checked: reinstall it to give it one"
                         .to_string(),
                 ),
+                Origin::Imported => {}
             }
             if !installed.changed.is_empty() {
                 notes.push(format!(
@@ -4318,10 +4241,15 @@ impl Summary {
                 current.unwrap_or_default()
             ));
         }
+        notes.extend(
+            self.cautions
+                .iter()
+                .map(|caution| format!("caution: {caution}")),
+        );
         if self.folder.is_none() {
             match (&self.archive, &self.installed) {
                 (Some(archive), _) => notes.push(format!(
-                    "kept as {} in the mods folder: it can be installed and uninstalled, not \
+                    "a zip in the mods folder ({}): it can be installed and uninstalled, not \
                      rebuilt",
                     archive
                         .file_name()

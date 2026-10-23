@@ -54,7 +54,7 @@ pub struct Manifest {
     pub game_build: Option<String>,
     pub dependencies: Vec<String>,
     /// `alchemists-tools` for `mod install`; `zip` for a mod extracted from its zip, whose own data
-    /// container and template save are among its files.
+    /// container and template save are among its files; `import` for one `mod import` made.
     pub installed_by: String,
     /// The game tables its edits change.
     pub tables: Vec<String>,
@@ -62,6 +62,8 @@ pub struct Manifest {
     /// The game functions its C++ code detours, and those it hooks through UE4SS.
     pub detours: Vec<String>,
     pub hooks: Vec<String>,
+    /// What couldn't be checked about it (an imported mod's), warned about whenever it's installed.
+    pub cautions: Vec<String>,
     pub files: Vec<FileRecord>,
 }
 

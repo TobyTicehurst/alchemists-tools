@@ -78,11 +78,16 @@ impl Settings {
         }
     }
 
-    /// The `.usmap`: as set, or the newest the game's UE4SS dumped.
+    /// The `.usmap`: as set; else the tools' own for the game's build (see [`crate::mappings`]);
+    /// else the newest the game's UE4SS dumped; else the tools' newest, for another build.
     pub fn usmap(&self, game: Option<&Game>) -> Option<PathBuf> {
-        self.usmap
-            .clone()
+        if let Some(path) = &self.usmap {
+            return Some(path.clone());
+        }
+        game.and_then(crate::mods::game_build)
+            .and_then(|build| crate::mappings::for_build(&build))
             .or_else(|| game.and_then(Game::find_usmap))
+            .or_else(|| crate::mappings::newest().map(|(_, path)| path))
     }
 
     pub fn mods(&self) -> Vec<PathBuf> {

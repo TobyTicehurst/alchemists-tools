@@ -18,17 +18,26 @@ the mod logs each new bag, and on Ctrl + Numpad 1 lists what the newest one hold
 
 ## Setting up UE4SS
 
-1. Install UE4SS (v3.0.1 is the version tested) into `AlchemyFactory/Binaries/Win64/`.
+1. Install UE4SS with the tools: Setup's **Install UE4SS** in the GUI, the installer's offer, or
+   `alchemists-tools ue4ss install`.
 2. Start the game once.
 3. Check the log, `Binaries/Win64/ue4ss/UE4SS.log`: everything a mod prints goes there.
 
-The tools need UE4SS anyway, for the game's `.usmap` (Ctrl + Numpad 6 in a new save).
+The game runs on Unreal Engine 5.7, which only UE4SS's experimental builds support. The tools install one build,
+`v3.0.1-1164-g5e627997` (pinned in `core/src/ue4ss.rs`), the one this game's mods are made and tested with: C++ mods
+are compiled against an exact build, so every player needs the same one. They download it from their own release
+(or else UE4SS's `experimental` release) and check it against its SHA-256. A UE4SS installed some other way is left
+alone; if it's that very build, the tools take it over as it is, so they can remove it later. **Disable** in Setup
+(or `alchemists-tools ue4ss disable`) starts the game without UE4SS, as after a game update it can't handle yet.
 
-The game runs on Unreal Engine 5.7, which only UE4SS's experimental builds support. Build `v3.0.1-1181` (from
-the `experimental` release; `experimental-latest` replaces its files with each new build) is known to work.
+Installing by hand works too: unzip `UE4SS_v3.0.1-1164-g5e627997.zip` from UE4SS's `experimental` release into
+`AlchemyFactory/Binaries/Win64/` (its `experimental-latest` release holds only the newest build).
+
+Modders also use UE4SS to dump the game's `.usmap` (Ctrl + Numpad 6 in a new save); players get the tools' own.
 
 **With AF Mod Loader.** [AF Mod Loader](https://github.com/danipr25/af-modloader) is another way to run Lua mods. Its
-installer installs UE4SS 1181 with a loader for mods in `<game>/mods/`. It refuses to install over a UE4SS it
+installer installs UE4SS 1181, not the build the tools pin (C++ mods made for 1164 may not load with it), with a
+loader for mods in `<game>/mods/`. It refuses to install over a UE4SS it
 didn't install, so install it first if you want both. Mods installed by `alchemists-tools` still work beside it.
 Its installer leaves out UE4SS's sample mods, `Keybinds` among them, so Ctrl + Numpad 6 and the other dump keys
 do nothing. To dump the `.usmap`, copy `Mods/Keybinds/` from the UE4SS zip into `ue4ss/Mods/` and put an empty

@@ -1,0 +1,16 @@
+[package]
+name = "alchemists-tools-setup"
+description = "The installer for Alchemist's Tools: the tools, the game's mappings, and the PATH"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+sha2.workspace = true
+zip.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+winreg = "0.56"
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging"] }

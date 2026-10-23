@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["core", "calculator", "cli", "gui"]
+members = ["core", "calculator", "cli", "gui", "installer"]
 
 [workspace.package]
 version = "0.1.0"
@@ -11,6 +11,7 @@ license = "MIT"
 alchemists-core = { path = "core" }
 anyhow = "1"
 clap = { version = "4.5", features = ["derive"] }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 indexmap = { version = "2", features = ["serde"] }
 repak = { git = "https://github.com/trumank/repak.git", features = ["oodle"] }
 oodle_loader = { git = "https://github.com/trumank/repak.git" }

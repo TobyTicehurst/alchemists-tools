@@ -1,6 +1,6 @@
-//! What the tools need, and whether it's there: the game, UE4SS, the `.usmap`, the mods folders and
-//! the optional Unreal parts. `alchemists-tools check` prints these; the GUI shows them in its setup
-//! section.
+//! What the tools need, and whether it's there: the game, UE4SS, the `.usmap` and the mods folders,
+//! which players need ([`player_checks`], what the GUI's Setup shows), and the Unreal parts and
+//! Oodle, which only making mods needs ([`maker_checks`]). `alchemists-tools check` prints both.
 
 use std::path::PathBuf;
 
@@ -30,10 +30,14 @@ pub struct Check {
     pub help: &'static str,
 }
 
-const UE4SS_HELP: &str =
-    "Runs Lua and C++ mods, and dumps the .usmap. Install UE4SS's experimental \
-    build v3.0.1-1181 into AlchemyFactory/Binaries/Win64/ (docs/examples/lua.md, \"Setting up \
-    UE4SS\").";
+const UE4SS_HELP: &str = "What runs Lua and C++ mods in the game. Players need it for any mod \
+    with Lua or C++; mods that only change the game's tables or add models don't, as the game \
+    loads those itself. The tools install the build mods' C++ is made for, and can disable it \
+    after a game update it can't handle yet (docs/examples/lua.md, \"Setting up UE4SS\").";
+const MAPPINGS_HELP: &str = "The game's data layouts: its files store values without their \
+    names or types, and this tells the tools what they are. Needed to install (or build) any mod \
+    that changes the game's tables, since installing merges every mod's table changes; mods of \
+    only Lua or C++ don't need it. It must be dumped again after each game update.";
 
 /// The game's executable, which is running while the game is.
 const GAME_PROCESS: &str = "AlchemyFactory-Win64-Shipping.exe";
@@ -70,7 +74,15 @@ pub fn ue4ss_version(game: &Game) -> Option<String> {
         })
 }
 
+/// Every check: the players' and the makers'.
 pub fn checks(settings: &Settings) -> Vec<Check> {
+    let mut checks = player_checks(settings);
+    checks.extend(maker_checks(settings));
+    checks
+}
+
+/// What playing with mods needs: the game, UE4SS, the mappings and the mods folders.
+pub fn player_checks(settings: &Settings) -> Vec<Check> {
     let mut checks = vec![];
     let game = settings.game().filter(|game| game.paks().is_dir());
     checks.push(match &game {
@@ -82,7 +94,8 @@ pub fn checks(settings: &Settings) -> Vec<Check> {
                 None => "found (no Steam build number: not installed by Steam?)".to_string(),
             },
             path: Some(game.root.clone()),
-            help: "Alchemy Factory, installed by Steam.",
+            help: "Alchemy Factory, installed by Steam: where mods are installed, and whose \
+                tables mods change. Its Steam build tells which mods were made for an older one.",
         },
         None => Check {
             name: "Game",
@@ -108,36 +121,46 @@ pub fn checks(settings: &Settings) -> Vec<Check> {
             });
         }
         let binaries = join(&game.root, &["AlchemyFactory", "Binaries", "Win64"]);
-        let installed = ["ue4ss/UE4SS.dll", "UE4SS.dll"]
-            .iter()
-            .any(|dll| binaries.join(dll).is_file());
-        let proxy = ["dwmapi.dll", "xinput1_3.dll"]
-            .iter()
-            .any(|dll| binaries.join(dll).is_file());
-        checks.push(match (installed, proxy) {
-            (true, true) => Check {
-                name: "UE4SS",
-                status: Status::Found,
-                summary: ue4ss_version(game)
-                    .map(|version| format!("version {version}"))
-                    .unwrap_or_else(|| "installed; no log yet (start the game once)".to_string()),
-                path: Some(binaries.join("ue4ss")),
-                help: UE4SS_HELP,
-            },
-            (true, false) => Check {
-                name: "UE4SS",
-                status: Status::Warning,
-                summary: "UE4SS.dll is there, but not the dwmapi.dll that loads it".to_string(),
-                path: Some(binaries.join("ue4ss")),
-                help: UE4SS_HELP,
-            },
-            _ => Check {
-                name: "UE4SS",
-                status: Status::Missing,
-                summary: "not installed: Lua and C++ mods can't be installed".to_string(),
-                path: None,
-                help: UE4SS_HELP,
-            },
+        let path = Some(binaries.join("ue4ss"));
+        let pinned = crate::ue4ss::VERSION;
+        let (status, summary) = match crate::ue4ss::installed(game) {
+            crate::ue4ss::Installed::None => (
+                Status::Missing,
+                format!(
+                    "not installed: mods with Lua or C++ can't be installed (install UE4SS \
+                     {pinned} here, or: alchemists-tools ue4ss install)"
+                ),
+            ),
+            _ if !crate::ue4ss::has_loader(game) => (
+                Status::Warning,
+                "UE4SS.dll is there, but not the dwmapi.dll that loads it".to_string(),
+            ),
+            crate::ue4ss::Installed::Tools { disabled: true, .. }
+            | crate::ue4ss::Installed::Other { disabled: true, .. } => (
+                Status::Warning,
+                "disabled: the game starts without it, so mods' Lua and C++ don't run".to_string(),
+            ),
+            crate::ue4ss::Installed::Tools { version, .. } => {
+                (Status::Found, format!("{version}, installed by the tools"))
+            }
+            crate::ue4ss::Installed::Other { pinned: true, .. } => {
+                (Status::Found, format!("{pinned}, installed by hand"))
+            }
+            crate::ue4ss::Installed::Other { version, .. } => (
+                Status::Warning,
+                format!(
+                    "{}, installed some other way: mods with C++ made for these tools need \
+                     {pinned}",
+                    version.unwrap_or_else(|| "a build without a log yet".to_string())
+                ),
+            ),
+        };
+        checks.push(Check {
+            name: "UE4SS",
+            status,
+            summary,
+            path,
+            help: UE4SS_HELP,
         });
         let mod_loader = game.root.join("mods");
         if mod_loader.is_dir() {
@@ -146,43 +169,77 @@ pub fn checks(settings: &Settings) -> Vec<Check> {
                 status: Status::Found,
                 summary: "installed: its mods (in mods/) are shown, but managed by it".to_string(),
                 path: Some(mod_loader),
-                help: "Another way to run Lua mods; mods installed here work beside it.",
+                help: "Another way to run Lua mods, with its own mods folder. Not needed: \
+                    shown so that its mods aren't mistaken for this tool's. Mods installed here \
+                    work beside it.",
             });
         }
     }
     let usmap = settings.usmap(game.as_ref());
+    let build = game.as_ref().and_then(crate::mods::game_build);
+    let shipped = usmap.as_deref().and_then(crate::mappings::shipped_build);
     checks.push(match (&usmap, &game) {
         (Some(path), _) if !path.is_file() => Check {
             name: "Mappings (.usmap)",
-            status: Status::Missing,
-            summary: format!("{} doesn't exist", display_path(path)),
+            status: Status::Warning,
+            summary: format!(
+                "{} doesn't exist: mods that change tables can't be installed",
+                display_path(path)
+            ),
             path: Some(path.clone()),
-            help: "The game's data layouts, which building mods needs.",
+            help: MAPPINGS_HELP,
         },
+        (Some(path), _) if shipped.is_some() => {
+            let made_for = shipped.clone().unwrap_or_default();
+            match &build {
+                Some(build) if *build != made_for => Check {
+                    name: "Mappings (.usmap)",
+                    status: Status::Warning,
+                    summary: format!(
+                        "the tools' own are for game build {made_for}, and the game is build \
+                         {build}: mods that change tables may not install until a new release \
+                         of the tools (or dump new ones with UE4SS: Ctrl + Numpad 6 in a new \
+                         save)"
+                    ),
+                    path: Some(path.clone()),
+                    help: MAPPINGS_HELP,
+                },
+                _ => Check {
+                    name: "Mappings (.usmap)",
+                    status: Status::Found,
+                    summary: format!("the tools' own, for game build {made_for}"),
+                    path: Some(path.clone()),
+                    help: MAPPINGS_HELP,
+                },
+            }
+        }
         (Some(path), Some(game)) if !crate::update::stale_dumps(game, path).is_empty() => Check {
             name: "Mappings (.usmap)",
             status: Status::Warning,
             summary: "older than the game: dump a new one (Ctrl + Numpad 6 in a new save)"
                 .to_string(),
             path: Some(path.clone()),
-            help: "The game's data layouts, which building mods needs. Dump one with UE4SS after \
-                each game update.",
+            help: MAPPINGS_HELP,
         },
         (Some(path), _) => Check {
             name: "Mappings (.usmap)",
             status: Status::Found,
-            summary: "found".to_string(),
+            summary: if settings.usmap.is_some() {
+                "as set".to_string()
+            } else {
+                "dumped by UE4SS".to_string()
+            },
             path: Some(path.clone()),
-            help: "The game's data layouts, which building mods needs.",
+            help: MAPPINGS_HELP,
         },
         (None, _) => Check {
             name: "Mappings (.usmap)",
-            status: Status::Missing,
-            summary: "none in the game's ue4ss folder: mods can't be built".to_string(),
+            status: Status::Warning,
+            summary: "none in the game's ue4ss folder: mods that change tables can't be \
+                installed (with UE4SS, start a new save and press Ctrl + Numpad 6)"
+                .to_string(),
             path: None,
-            help:
-                "The game's data layouts, which building mods needs. With UE4SS installed, start \
-                a new save and press Ctrl + Numpad 6.",
+            help: MAPPINGS_HELP,
         },
     });
     if settings.mods.is_empty() {
@@ -215,25 +272,17 @@ pub fn checks(settings: &Settings) -> Vec<Check> {
                 "doesn't exist".to_string()
             },
             path: Some(std::path::absolute(&folder).unwrap_or(folder)),
-            help: "A folder of mod folders, each with a mod.json (or git clones of them). \
-                Unticked mods stay here.",
+            help: "Where your mods are kept, installed or not: mod folders, and mods' zips (as \
+                downloaded). Unticked mods stay here; the game only sees what's installed.",
         });
     }
-    let git = crate::git::version();
-    checks.push(Check {
-        name: "Git",
-        status: if git.is_some() {
-            Status::Found
-        } else {
-            Status::Optional
-        },
-        summary: match git {
-            Some(version) => format!("version {version}"),
-            None => "not found: only adding mods from git needs it".to_string(),
-        },
-        path: None,
-        help: "For adding mods from git repositories (https://git-scm.com/downloads).",
-    });
+    checks
+}
+
+/// What making mods needs besides: the stub Unreal project, the engine, and Oodle (which the tools
+/// fetch themselves).
+pub fn maker_checks(settings: &Settings) -> Vec<Check> {
+    let mut checks = vec![];
     let project = settings.project();
     checks.push(Check {
         name: "Stub Unreal project",
@@ -245,11 +294,12 @@ pub fn checks(settings: &Settings) -> Vec<Check> {
         summary: if project.is_file() {
             "found".to_string()
         } else {
-            "not found: only mods with cooked content need it".to_string()
+            "not found: only for making mods with new models or Blueprints".to_string()
         },
         path: Some(project),
-        help: "An Unreal project set up by `alchemists-tools stub`, for cooking meshes and \
-            Blueprints (docs/STUB-PROJECT.md).",
+        help: "For mod makers only: an Unreal project set up by `alchemists-tools stub`, for \
+            cooking new models and Blueprints (docs/STUB-PROJECT.md). Players never need it: a \
+            mod's zip holds what was cooked.",
     });
     let engine = settings.engine();
     checks.push(Check {
@@ -262,10 +312,11 @@ pub fn checks(settings: &Settings) -> Vec<Check> {
         summary: if engine.is_dir() {
             "found".to_string()
         } else {
-            "not found: only setting up the stub project needs it".to_string()
+            "not found: only for making mods with new models or Blueprints".to_string()
         },
         path: Some(engine),
-        help: "From the Epic Games Launcher, for building the stub project.",
+        help: "For mod makers only: from the Epic Games Launcher, to build the stub project. \
+            Players never need it.",
     });
     let oodle = std::env::current_exe().ok().and_then(|exe| {
         exe.parent()
@@ -286,7 +337,9 @@ pub fn checks(settings: &Settings) -> Vec<Check> {
                 "downloaded the first time the game's files are read".to_string()
             },
             path: Some(oodle),
-            help: "The decompressor for the game's files.",
+            help: "The decompressor for the game's packed files, which the tools read the \
+                game's tables from. Downloaded by the tools the first time they need it, so \
+                there's nothing to install.",
         });
     }
     checks

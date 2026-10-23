@@ -59,6 +59,7 @@ name = "alchemists-core"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "image",
  "indexmap 2.12.0",
  "oodle_loader",
  "regex",
@@ -93,6 +94,18 @@ dependencies = [
  "indexmap 2.12.0",
  "retoc",
  "serde_json",
+]
+
+[[package]]
+name = "alchemists-tools-setup"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "sha2",
+ "windows-sys 0.61.2",
+ "winreg",
+ "zip",
 ]
 
 [[package]]

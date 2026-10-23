@@ -1,0 +1,71 @@
+# A release, made when a tag v<version> is pushed (the version in Cargo.toml):
+# - alchemists-tools-<version>-windows.zip: the tools, README, LICENSE, and the game's mappings;
+# - alchemists-tools-setup.exe: the installer players download, which downloads that zip and checks
+#   it against the SHA-256 built into it here;
+# - UE4SS's zip, the build the tools pin (core/src/ue4ss.rs), copied from UE4SS's own release (its
+#   MIT licence allows it) so that it stays downloadable; the tools check it against the same pin.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check the tag is the version
+        shell: pwsh
+        run: |
+          $version = ((cargo metadata --no-deps --format-version 1 | ConvertFrom-Json).packages |
+            Where-Object name -eq "alchemists-tools").version
+          if ("v$version" -ne "${{ github.ref_name }}") {
+            throw "the tag ${{ github.ref_name }} isn't v$version, the version in Cargo.toml"
+          }
+          "VERSION=$version" >> $env:GITHUB_ENV
+
+      - name: Test
+        run: cargo test --workspace --locked
+
+      - name: Build the tools
+        run: cargo build --release --locked -p alchemists-tools -p alchemists-gui
+
+      - name: Make the release zip
+        shell: pwsh
+        run: |
+          $zip = "alchemists-tools-$env:VERSION-windows.zip"
+          New-Item -ItemType Directory release/mappings | Out-Null
+          Copy-Item target/release/alchemists-tools.exe, target/release/alchemists-gui.exe, README.md, LICENSE release/
+          Copy-Item mappings/*.usmap release/mappings/
+          Compress-Archive -Path release/* -DestinationPath $zip
+          $hash = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLower()
+          "ZIP=$zip" >> $env:GITHUB_ENV
+          "ALCHEMISTS_PAYLOAD_SHA256=$hash" >> $env:GITHUB_ENV
+
+      - name: Copy the pinned UE4SS
+        shell: pwsh
+        run: |
+          $source = Get-Content core/src/ue4ss.rs -Raw
+          $zip = [regex]::Match($source, 'pub const ZIP: &str = "([^"]+)"').Groups[1].Value
+          $expected = [regex]::Match($source, 'const ZIP_SHA256: &str = "([0-9a-f]+)"').Groups[1].Value
+          if (-not $zip -or -not $expected) { throw "couldn't read the pinned UE4SS from core/src/ue4ss.rs" }
+          Invoke-WebRequest "https://github.com/UE4SS-RE/RE-UE4SS/releases/download/experimental/$zip" -OutFile $zip
+          $hash = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLower()
+          if ($hash -ne $expected) { throw "$zip isn't the pinned build (SHA-256 $hash)" }
+          "UE4SS_ZIP=$zip" >> $env:GITHUB_ENV
+
+      - name: Build the installer, with the zip's checksum
+        run: cargo build --release --locked -p alchemists-tools-setup
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >
+          gh release create ${{ github.ref_name }}
+          target/release/alchemists-tools-setup.exe ${{ env.ZIP }} ${{ env.UE4SS_ZIP }}
+          --title "Alchemist's Tools ${{ env.VERSION }}" --generate-notes

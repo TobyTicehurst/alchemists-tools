@@ -31,6 +31,11 @@ struct Cli {
 enum Command {
     /// Find the game, UE4SS, the .usmap and the other things the tools use, and say what's missing
     Check,
+    /// Install UE4SS (the build mods' C++ is made for) into the game, or remove, disable or enable it
+    Ue4ss {
+        #[command(subcommand)]
+        action: Ue4ssAction,
+    },
     /// Show the saved settings, or change them: where the game, mods and builds are. The GUI uses
     /// the same settings
     Settings {
@@ -187,6 +192,28 @@ enum Command {
 }
 
 #[derive(Subcommand)]
+enum Ue4ssAction {
+    /// Download the pinned build (checked against its SHA-256) and install it, if no UE4SS is
+    /// there; one installed by hand is left alone, unless it's that very build
+    Install {
+        /// The build's zip, if you have it, instead of downloading it
+        #[arg(long)]
+        zip: Option<PathBuf>,
+    },
+    /// Remove the UE4SS the tools installed: only its files, and only those unchanged
+    Remove {
+        /// Also delete its files that have changed since
+        #[arg(long)]
+        force: bool,
+    },
+    /// Start the game without UE4SS (its loader, dwmapi.dll, is renamed), as after a game update
+    /// it can't handle
+    Disable,
+    /// Start the game with UE4SS again
+    Enable,
+}
+
+#[derive(Subcommand)]
 enum ModAction {
     /// Start a mod folder with a mod.json
     New { name: String },
@@ -246,6 +273,19 @@ enum ModAction {
     /// Pull the git repository a mod was added from (only a fast-forward); install it again to
     /// use the new version
     Update { name: String },
+    /// Import a mod made without this tool (a zip from a mod site), as best it can be, into the
+    /// first mods folder; then install it as any other. Refuses zips it can't place safely, and
+    /// notes what it can't check
+    Import {
+        /// The mod's zip
+        zip: PathBuf,
+        /// The name to give it [default: from its folder or file names]
+        #[arg(long)]
+        name: Option<String>,
+        /// Its version [default: from the zip's name, else 1.0.0]
+        #[arg(long)]
+        version: Option<String>,
+    },
     /// The mods in the mods folders, what is installed, and what needs attention
     List,
     /// Every mod in the game folder, whether its files are as installed, and what else is there
@@ -325,6 +365,9 @@ fn mod_command(
             workspace.add_from_git(&url, branch.as_deref()).map(|_| ())
         }
         ModAction::Update { name } => workspace.update_from_git(&name),
+        ModAction::Import { zip, name, version } => workspace
+            .import(&zip, name.as_deref(), version.as_deref())
+            .map(|_| ()),
         ModAction::Apply {
             names,
             none: _,
@@ -458,6 +501,17 @@ fn main() -> Result<()> {
     };
     match cli.command {
         Command::Check => return check(&places),
+        Command::Ue4ss { action } => {
+            let game = places.game()?;
+            return match action {
+                Ue4ssAction::Install { zip } => {
+                    alchemists_core::ue4ss::install(&game, zip.as_deref())
+                }
+                Ue4ssAction::Remove { force } => alchemists_core::ue4ss::remove(&game, force),
+                Ue4ssAction::Disable => alchemists_core::ue4ss::set_enabled(&game, false),
+                Ue4ssAction::Enable => alchemists_core::ue4ss::set_enabled(&game, true),
+            };
+        }
         Command::Settings {
             mods,
             build,
@@ -476,7 +530,9 @@ fn main() -> Result<()> {
     let game = places.game()?;
     let usmap = places.usmap(&game)?;
     match cli.command {
-        Command::Check | Command::Settings { .. } | Command::Mod { .. } => unreachable!(),
+        Command::Check | Command::Ue4ss { .. } | Command::Settings { .. } | Command::Mod { .. } => {
+            unreachable!()
+        }
         Command::Extract { out } => {
             println!("game: {}", display_path(&game.root));
             println!("mappings: {}", display_path(&usmap));
