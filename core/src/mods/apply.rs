@@ -318,7 +318,7 @@ impl Workspace {
                 display_path(&archive.path)
             );
         }
-        self.save_record(&mut transaction, &record)?;
+        self.save_record(&mut transaction, &mut record)?;
         transaction.commit()?;
 
         let installed: Vec<String> = built

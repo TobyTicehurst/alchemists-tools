@@ -404,7 +404,7 @@ impl Workspace {
         let files = GameFiles::new(&self.game.root)?;
         let mut transaction = files.begin()?;
         self.merge(&mut record, false, &mut transaction)?;
-        self.save_record(&mut transaction, &record)?;
+        self.save_record(&mut transaction, &mut record)?;
         transaction.commit()
     }
 }

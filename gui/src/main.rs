@@ -374,6 +374,72 @@ impl App {
         }
     }
 
+    /// The game has updated since the mods were installed: what that means, and what to do.
+    fn game_updated_notice(&mut self, ui: &mut egui::Ui) {
+        let Some((installed, current)) = self.overview.game_updated.clone() else {
+            return;
+        };
+        let warn = ui.visuals().warn_fg_color;
+        let ue4ss_enabled = matches!(
+            self.ue4ss,
+            Some(
+                ue4ss::Installed::Tools {
+                    disabled: false,
+                    ..
+                } | ue4ss::Installed::Other {
+                    disabled: false,
+                    ..
+                }
+            )
+        );
+        ui.add_space(4.0);
+        egui::Frame::new()
+            .fill(warn.gamma_multiply(0.10))
+            .corner_radius(4)
+            .inner_margin(8)
+            .show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                ui.horizontal(|ui| {
+                    ui.colored_label(warn, RichText::new("⚠").heading());
+                    ui.vertical(|ui| {
+                        ui.label(
+                            RichText::new(format!(
+                                "The game has updated (build {installed} to {current}) since the \
+                                 mods were installed"
+                            ))
+                            .strong(),
+                        );
+                        ui.add(
+                            egui::Label::new(
+                                "Confirm installs them again, merging their table changes into \
+                                 the new game's tables: until then, they hide the update's own \
+                                 changes. If the game now crashes at start, UE4SS or a mod's C++ \
+                                 isn't ready for the new build: disable UE4SS until they're \
+                                 updated.",
+                            )
+                            .wrap(),
+                        );
+                        if ue4ss_enabled {
+                            let disable = ui
+                                .add_enabled(
+                                    self.running.is_none(),
+                                    egui::Button::new("Disable UE4SS"),
+                                )
+                                .on_hover_text(
+                                    "Start the game without UE4SS (mods' Lua and C++ don't run); \
+                                     enable it again in Setup",
+                                );
+                            if disable.clicked() {
+                                let context = ui.ctx().clone();
+                                self.start(&context, Job::Ue4ss(work::Ue4ssAction::Disable));
+                            }
+                        }
+                    });
+                });
+            });
+        ui.add_space(4.0);
+    }
+
     fn actions(&mut self, ui: &mut egui::Ui) {
         ui.add_space(4.0);
         self.outcome_banner(ui);
@@ -542,6 +608,9 @@ impl eframe::App for App {
         });
         match self.view {
             View::Mods => {
+                if self.overview.game_updated.is_some() {
+                    egui::Panel::top("game updated").show(ui, |ui| self.game_updated_notice(ui));
+                }
                 egui::Panel::bottom("actions").show(ui, |ui| self.actions(ui));
                 if self.show_log {
                     egui::Panel::bottom("log")

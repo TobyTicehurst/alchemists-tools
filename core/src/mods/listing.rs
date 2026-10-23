@@ -147,10 +147,12 @@ impl Workspace {
         } else {
             vec![]
         };
+        let current = game_build(&self.game);
         Ok(Overview {
             mods: mods.into_values().collect(),
             unmanaged,
-            game_build: game_build(&self.game),
+            game_updated: record.game_updated(current.as_deref()),
+            game_build: current,
             load_order: record.load_order,
         })
     }
@@ -263,6 +265,9 @@ impl Workspace {
         }
         if !overview.load_order.is_empty() {
             note!("load order: {}", overview.load_order.join(", "));
+        }
+        if let Some((installed, current)) = &overview.game_updated {
+            warning!("{}", game_updated_text(installed, current));
         }
         Ok(())
     }
@@ -641,6 +646,9 @@ pub struct Overview {
     pub unmanaged: Vec<Unmanaged>,
     /// The game's Steam build.
     pub game_build: Option<String>,
+    /// (the build the installed mods were installed on, the game's build now), if the game has
+    /// updated since ([`Record::game_updated`]).
+    pub game_updated: Option<(String, String)>,
     pub load_order: Vec<String>,
 }
 
@@ -698,6 +706,17 @@ impl Overview {
             );
         }
     }
+}
+
+/// What a game update since the mods were installed means, and what to do (for `mod list`).
+fn game_updated_text(installed: &str, current: &str) -> String {
+    format!(
+        "the game has updated (build {installed} to {current}) since the mods were installed: \
+         install them again (mod apply, or the GUI's Confirm) so their table changes are merged \
+         into the new game's tables, which until then hide the update's own; mods' C++ and UE4SS \
+         may not work with the new build yet: if the game crashes at start, disable UE4SS \
+         (alchemists-tools ue4ss disable)"
+    )
 }
 
 #[cfg(test)]

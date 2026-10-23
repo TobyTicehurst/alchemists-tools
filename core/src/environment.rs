@@ -120,6 +120,26 @@ pub fn player_checks(settings: &Settings) -> Vec<Check> {
                 help: "The running game holds its files open.",
             });
         }
+        let current = crate::mods::game_build(game);
+        let updated = crate::mods::installed_record(game)
+            .ok()
+            .and_then(|record| record.game_updated(current.as_deref()));
+        if let Some((installed, current)) = updated {
+            checks.push(Check {
+                name: "Game updated",
+                status: Status::Warning,
+                summary: format!(
+                    "build {installed} to {current} since the mods were installed: install them \
+                     again"
+                ),
+                path: None,
+                help:
+                    "The installed mods' table changes are merged into the game's tables as they \
+                    were when the mods were installed, so until they're installed again (Confirm) \
+                    the update's own table changes are hidden. Mods' C++ and UE4SS may not work \
+                    with the new build yet: if the game crashes at start, disable UE4SS.",
+            });
+        }
         let binaries = join(&game.root, &["AlchemyFactory", "Binaries", "Win64"]);
         let path = Some(binaries.join("ue4ss"));
         let pinned = crate::ue4ss::VERSION;

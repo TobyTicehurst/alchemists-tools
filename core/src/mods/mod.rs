@@ -585,7 +585,8 @@ impl Workspace {
     }
 
     /// Write the install record, as part of a change to the game folder.
-    fn save_record(&self, transaction: &mut Transaction, record: &Record) -> Result<()> {
+    fn save_record(&self, transaction: &mut Transaction, record: &mut Record) -> Result<()> {
+        record.game_build = game_build(&self.game);
         let relative = format!("{}/{RECORD}", PAK_FOLDER.join("/"));
         transaction.write(
             &relative,
@@ -885,6 +886,24 @@ pub struct Record {
     /// The files the tool generates (the merged containers), as it last wrote them: no mod owns
     /// them, and they're only replaced or removed while they're still exactly these.
     pub generated: IndexMap<String, FileRecord>,
+    /// The game's build when the record was last written, so when the merged tables were made
+    /// from the game's: after a game update they hide its table changes until the mods are
+    /// installed again (see [`Record::game_updated`]).
+    pub game_build: Option<String>,
+}
+
+impl Record {
+    /// (the build the installed mods were installed on, the game's build now), if the game has
+    /// updated since: their merged tables are the old game's, and their C++ and UE4SS may not
+    /// work with the new one.
+    pub fn game_updated(&self, current: Option<&str>) -> Option<(String, String)> {
+        match (&self.game_build, current) {
+            (Some(installed), Some(current)) if !self.mods.is_empty() && installed != current => {
+                Some((installed.clone(), current.to_string()))
+            }
+            _ => None,
+        }
+    }
 }
 
 /// Mod names with each mod after the mods it depends on (not `~`); otherwise alphabetical.

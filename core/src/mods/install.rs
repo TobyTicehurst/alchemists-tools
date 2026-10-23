@@ -324,7 +324,7 @@ impl Workspace {
             &mut transaction,
             &Self::manifest_for(&info, "alchemists-tools", new_files),
         )?;
-        self.save_record(&mut transaction, &record)?;
+        self.save_record(&mut transaction, &mut record)?;
         transaction.commit()?;
         note!(
             "installed {} {} (load order: {}); restart the game to load it",
@@ -528,7 +528,7 @@ impl Workspace {
                 note!("removed {path}");
             }
         }
-        self.save_record(&mut transaction, &record)?;
+        self.save_record(&mut transaction, &mut record)?;
         transaction.commit()?;
         note!("uninstalled {name}");
         if !kept.is_empty() {
